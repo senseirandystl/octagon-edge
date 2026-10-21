@@ -16,9 +16,9 @@ The model is an interpretable weighted logistic on those signals. It runs in the
 
 ## Odds and bets
 
-Analyze also pulls moneylines for DraftKings, FanDuel, BetMGM, Caesars, BetRivers, Hard Rock, and Bovada, plus method and distance props when a book has posted them.
+Analyze pulls public moneylines, then grades the card against the sportsbook you select: DraftKings, FanDuel, BetMGM, Caesars, Fanatics, BetRivers, Hard Rock, or Bovada. Method and distance props show only when that same book posted them.
 
-A side is marked **mispriced** when the best price has at least 4% expected value versus the model (8% for a prop). The card opens with those spots, and the price cell is highlighted. If the model likes a fighter but the number is too short, the fight says pass.
+A side is marked **mispriced** when that book's price has at least 4% expected value versus the model (8% for a prop). Fanatics is listed, but a number appears only when a public board has actually posted one. Nothing is copied from another book.
 
 Lines are read from public odds boards when you analyze or refresh. If that request fails, the app uses the saved board in `src/data/odds.json`. Fight nights with no posted line stay blank. Confirm the number in your account before you bet. It can move.
 

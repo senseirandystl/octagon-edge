@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, ScanSearch, TrendingUp } from "lucide-react";
 import profiles from "@/data/fighters.json";
 import bundled from "@/data/schedule.json";
 import { scoutFight } from "@/lib/ufc/enrich";
 import { findFighter, indexFighters, predictBout } from "@/lib/ufc/model";
 import {
+  BOOK_ORDER,
   formatAmerican,
   gradeBout,
   orientFight,
@@ -48,59 +49,39 @@ function dollars(ev: number): string {
 function OddsBlock({
   grade,
   loading,
+  book,
   aName,
   bName,
 }: {
   grade: Grade | null;
   loading: boolean;
+  book: string;
   aName: string;
   bName: string;
 }) {
-  if (loading && !grade) return <p className="mb-4 text-sm text-muted">Reading the books…</p>;
-  if (!grade || grade.books.every((row) => row.a == null && row.b == null)) {
-    return <p className="mb-4 text-sm text-muted">No moneyline posted at the major books yet.</p>;
+  if (loading && !grade) return <p className="mb-4 text-sm text-muted">Reading {book}…</p>;
+  if (!grade || (grade.a == null && grade.b == null)) {
+    return <p className="mb-4 text-sm text-muted">{book} has not posted a moneyline for this fight.</p>;
   }
   const valueA = grade.picks.some((pick) => pick.kind === "Moneyline" && pick.label === aName);
   const valueB = grade.picks.some((pick) => pick.kind === "Moneyline" && pick.label === bName);
+  const last = (name: string) => name.split(" ").slice(-1);
   return (
     <div className="mb-4">
-      <p className="mb-1 text-xs tracking-wide text-muted uppercase">Books</p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="text-xs tracking-wide text-muted uppercase">
-              <th className="py-1 font-medium">Book</th>
-              <th className="py-1 font-medium">{aName.split(" ").slice(-1)}</th>
-              <th className="py-1 font-medium">{bName.split(" ").slice(-1)}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {grade.books.map((row) => (
-              <tr key={row.book} className="border-t border-line">
-                <td className="py-1.5 text-muted">{row.book}</td>
-                <td className={valueA && grade.bestA?.book === row.book ? "font-semibold text-ember" : "text-fg"}>
-                  {money(row.a)}
-                </td>
-                <td className={valueB && grade.bestB?.book === row.book ? "font-semibold text-ember" : "text-fg"}>
-                  {money(row.b)}
-                </td>
-              </tr>
-            ))}
-            <tr className="border-t border-line">
-              <td className="py-1.5 text-muted">Best</td>
-              <td className={valueA ? "font-semibold text-ember" : "text-bone"}>
-                {grade.bestA ? `${formatAmerican(grade.bestA.american)} ${grade.bestA.book}` : "—"}
-              </td>
-              <td className={valueB ? "font-semibold text-ember" : "text-bone"}>
-                {grade.bestB ? `${formatAmerican(grade.bestB.american)} ${grade.bestB.book}` : "—"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <p className="mb-1 text-xs tracking-wide text-muted uppercase">{book}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className={`font-display text-3xl leading-none ${valueA ? "text-ember" : "text-fg"}`}>{money(grade.a)}</p>
+          <p className="text-sm text-muted">{last(aName)}</p>
+        </div>
+        <div className="text-right">
+          <p className={`font-display text-3xl leading-none ${valueB ? "text-ember" : "text-fg"}`}>{money(grade.b)}</p>
+          <p className="text-sm text-muted">{last(bName)}</p>
+        </div>
       </div>
       {grade.noVigA != null ? (
         <p className="mt-2 text-sm text-muted">
-          No-vig market {pct(grade.noVigA)} / {pct(1 - grade.noVigA)}.
+          {book} no-vig {pct(grade.noVigA)} / {pct(1 - grade.noVigA)}.
         </p>
       ) : null}
       {grade.picks.length > 0 ? (
@@ -108,7 +89,7 @@ function OddsBlock({
           {grade.picks.slice(0, 2).map((pick) => (
             <p key={`${pick.kind}-${pick.label}`} className="text-sm">
               <span className="font-semibold text-ember">
-                {pick.kind === "Moneyline" ? "Bet" : "Prop"} {pick.label} {formatAmerican(pick.american)} {pick.book}
+                {pick.kind === "Moneyline" ? "Bet" : "Prop"} {pick.label} {formatAmerican(pick.american)}
               </span>
               <span className="text-fg">
                 {" "}
@@ -132,11 +113,17 @@ export function Predictor() {
   const [refreshing, setRefreshing] = useState(false);
   const [analyzed, setAnalyzed] = useState(false);
   const [provider, setProvider] = useState<Provider>("grok");
+  const [book, setBook] = useState("DraftKings");
   const [apiKey, setApiKey] = useState("");
   const [scouts, setScouts] = useState<Record<string, ScoutState>>({});
   const [market, setMarket] = useState<MarketState>(emptyMarket);
 
   const event = events.find((item) => item.id === eventId) ?? events[0];
+
+  useEffect(() => {
+    const saved = localStorage.getItem("octagon-edge-book");
+    if (saved && (BOOK_ORDER as readonly string[]).includes(saved)) setBook(saved);
+  }, []);
 
   const predictions = useMemo(() => {
     if (!event || !analyzed) return [] as Prediction[];
@@ -148,9 +135,9 @@ export function Predictor() {
   const grades = useMemo(() => {
     if (!event || !analyzed) return [] as (Grade | null)[];
     return event.bouts.map((bout, boutIndex) =>
-      gradeBout(predictions[boutIndex], orientFight(market.fights, bout.a, bout.b)),
+      gradeBout(predictions[boutIndex], orientFight(market.fights, bout.a, bout.b), book),
     );
-  }, [analyzed, event, market.fights, predictions]);
+  }, [analyzed, book, event, market.fights, predictions]);
 
   const board = useMemo(() => {
     const picks: (ValuePick & { bout: string })[] = [];
@@ -256,14 +243,13 @@ export function Predictor() {
           </div>
         </div>
         <p className="max-w-2xl text-muted">
-          {fighters.length.toLocaleString()} fighters from UFC history through {historyAsOf}. Pick a card, then analyze.
-          The model is scored against DraftKings, FanDuel, BetMGM, Caesars, BetRivers, Hard Rock, and Bovada. Records are
-          UFC bouts only.
+          {fighters.length.toLocaleString()} fighters from UFC history through {historyAsOf}. Pick a card and your
+          sportsbook, then analyze. The model is scored against that book's price only. Records are UFC bouts only.
         </p>
       </header>
 
       <section className="mb-5 grid gap-3 rounded-lg border border-line bg-surface p-4 sm:grid-cols-[1fr_auto]">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <label className="grid gap-1 text-sm text-muted">
             Event
             <select
@@ -278,6 +264,23 @@ export function Predictor() {
               {events.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm text-muted">
+            Sportsbook
+            <select
+              className="min-h-11 rounded-md border border-line bg-raised px-3 text-base text-fg"
+              value={book}
+              onChange={(change) => {
+                setBook(change.target.value);
+                localStorage.setItem("octagon-edge-book", change.target.value);
+              }}
+            >
+              {BOOK_ORDER.map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>
@@ -345,11 +348,20 @@ export function Predictor() {
         </section>
       ) : null}
 
+      {analyzed &&
+      book === "Fanatics" &&
+      market.status !== "loading" &&
+      grades.every((grade) => !grade || (grade.a == null && grade.b == null)) ? (
+        <p className="mb-4 text-sm text-muted">
+          Fanatics is not on the public board for this card. No number is copied from another book.
+        </p>
+      ) : null}
+
       {analyzed && board.length > 0 ? (
         <section className="mb-4 rounded-lg border border-ember bg-surface p-4">
           <div className="mb-2 flex items-center gap-2">
             <TrendingUp className="size-4 text-ember" aria-hidden="true" />
-            <h2 className="font-display text-2xl leading-none text-fg">Mispriced</h2>
+            <h2 className="font-display text-2xl leading-none text-fg">Mispriced at {book}</h2>
           </div>
           <ul className="grid gap-2">
             {board.map((pick) => (
@@ -393,6 +405,7 @@ export function Predictor() {
                   <OddsBlock
                     grade={grades[index] ?? null}
                     loading={market.status === "loading"}
+                    book={book}
                     aName={bout.a}
                     bName={bout.b}
                   />
@@ -420,6 +433,7 @@ export function Predictor() {
                   <OddsBlock
                     grade={grades[index] ?? null}
                     loading={market.status === "loading"}
+                    book={book}
                     aName={prediction.aName}
                     bName={prediction.bName}
                   />
@@ -503,10 +517,11 @@ export function Predictor() {
       </div>
 
       <footer className="mt-8 border-t border-line pt-4 text-sm text-muted">
-        Moneylines are the best number at each book. A fight is marked mispriced when the model’s win chance beats that
-        price by about 4% expected value, or 8% on a method or distance prop. Lines move. Confirm the number in your
-        account before you bet. Surgery, camp, and scale weight are not in the file — Scout notes can add public context,
-        and only when you ask.
+        Prices are the sportsbook you selected, not the best number across books. A fight is marked mispriced when the
+        model’s win chance beats that price by about 4% expected value, or 8% on a method or distance prop from the same
+        book. Fanatics is listed, but a line shows only when a public board has posted one. Lines move. Confirm the
+        number in your account before you bet. Surgery, camp, and scale weight are not in the file — Scout notes can add
+        public context, and only when you ask.
       </footer>
     </main>
   );

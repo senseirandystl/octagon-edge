@@ -5,6 +5,7 @@ export const BOOK_ORDER = [
   "FanDuel",
   "BetMGM",
   "Caesars",
+  "Fanatics",
   "BetRivers",
   "Hard Rock Bet",
   "Bovada",
@@ -37,8 +38,6 @@ export type MarketFight = {
   props: PropLine[];
 };
 
-export type Price = { book: string; american: number; decimal: number };
-
 export type ValuePick = {
   label: string;
   book: string;
@@ -50,10 +49,10 @@ export type ValuePick = {
 };
 
 export type Grade = {
-  books: { book: string; a: number | null; b: number | null }[];
+  book: string;
+  a: number | null;
+  b: number | null;
   noVigA: number | null;
-  bestA: Price | null;
-  bestB: Price | null;
   evA: number | null;
   evB: number | null;
   picks: ValuePick[];
@@ -165,16 +164,16 @@ function linesFromSides(aPrices: Record<number, number>, bPrices: Record<number,
   return books;
 }
 
-function bestProp(label: string, key: string, prices: Record<number, number>): PropLine | null {
-  let best: PropLine | null = null;
+function propsFor(label: string, key: string, prices: Record<number, number>): PropLine[] {
+  const props: PropLine[] = [];
   for (const [id, name] of Object.entries(BFO_BOOKS)) {
     const american = prices[Number(id)];
     if (american == null) continue;
     const decimal = decimalFromAmerican(american);
     if (decimal <= 1) continue;
-    if (!best || decimal > best.decimal) best = { key, label, decimal, american, book: name };
+    props.push({ key, label, decimal, american, book: name });
   }
-  return best;
+  return props;
 }
 
 export function parseBestFightOddsHtml(html: string): MarketFight[] {
@@ -206,8 +205,8 @@ export function parseBestFightOddsHtml(html: string): MarketFight[] {
     }
     if (!current || expect === "b") continue;
     const label = decode(row.match(/<th[^>]*>([\s\S]*?)<\/th>/i)?.[1] ?? "");
-    const prop = propFromLabel(label, current, cellAmerican(row));
-    if (prop) current.props.push(prop);
+    const props = propFromLabel(label, current, cellAmerican(row));
+    current.props.push(...props);
   }
   if (current?.a && current.b) fights.push(current);
   return fights.filter((fight) => fight.books.length || fight.props.length);
@@ -221,7 +220,7 @@ function holdSide(prices: Record<number, number>): BookLine[] {
   }));
 }
 
-function propFromLabel(label: string, fight: MarketFight, prices: Record<number, number>): PropLine | null {
+function propFromLabel(label: string, fight: MarketFight, prices: Record<number, number>): PropLine[] {
   const ko = label.match(/^(.*) wins by TKO\/KO$/i);
   const sub = label.match(/^(.*) wins by submission$/i);
   const dec = label.match(/^(.*) wins by decision$/i);
@@ -229,13 +228,13 @@ function propFromLabel(label: string, fight: MarketFight, prices: Record<number,
     const who = (ko ?? sub ?? dec)![1].trim();
     const kind = ko ? "ko" : sub ? "sub" : "dec";
     const side = lastName(who) === lastName(fight.a) ? "a" : lastName(who) === lastName(fight.b) ? "b" : "";
-    if (!side) return null;
+    if (!side) return [];
     const pretty = kind === "ko" ? "KO/TKO" : kind === "sub" ? "submission" : "decision";
-    return bestProp(`${who} ${pretty}`, `${side}:${kind}`, prices);
+    return propsFor(`${who} ${pretty}`, `${side}:${kind}`, prices);
   }
-  if (/^fight goes to decision$/i.test(label)) return bestProp("Fight goes to decision", "distance", prices);
-  if (/^fight doesn't go to decision$/i.test(label)) return bestProp("Fight doesn't go to decision", "inside", prices);
-  return null;
+  if (/^fight goes to decision$/i.test(label)) return propsFor("Fight goes to decision", "distance", prices);
+  if (/^fight doesn't go to decision$/i.test(label)) return propsFor("Fight doesn't go to decision", "inside", prices);
+  return [];
 }
 
 export function mergeMarkets(primary: MarketFight[], extra: MarketFight[]): MarketFight[] {
@@ -253,12 +252,10 @@ export function mergeMarkets(primary: MarketFight[], extra: MarketFight[]): Mark
     }
     for (const prop of fight.props) {
       const key = flipped ? flipKey(prop.key) : prop.key;
-      const existing = host.props.find((item) => item.key === key);
       const next = { ...prop, key };
-      if (!existing || next.decimal > existing.decimal) {
-        if (existing) host.props = host.props.filter((item) => item.key !== key);
-        host.props.push(next);
-      }
+      const existing = host.props.find((item) => item.key === key && item.book === next.book);
+      if (!existing) host.props.push(next);
+      else if (next.decimal > existing.decimal) Object.assign(existing, next);
     }
   }
   return merged;
@@ -292,68 +289,37 @@ export function orientFight(fights: MarketFight[], a: string, b: string): Market
   };
 }
 
-function bestOf(lines: BookLine[], side: "a" | "b"): Price | null {
-  let best: Price | null = null;
-  for (const line of lines) {
-    if (!BOOK_ORDER.includes(line.book as (typeof BOOK_ORDER)[number])) continue;
-    const decimal = side === "a" ? line.a : line.b;
-    if (decimal <= 1) continue;
-    if (!best || decimal > best.decimal) {
-      best = { book: line.book, decimal, american: toAmerican(decimal) };
-    }
-  }
-  return best;
-}
-
-function outcomeProb(prediction: Prediction, key: string): number | null {
-  if (key === "distance") return prediction.rounds.find((row) => row.label === "Decision")?.pct ?? null;
-  if (key === "inside") {
-    const decision = prediction.rounds.find((row) => row.label === "Decision")?.pct;
-    return decision == null ? null : 1 - decision;
-  }
-  const [side, kind] = key.split(":");
-  const name = side === "a" ? prediction.aName : prediction.bName;
-  const last = name.split(" ").slice(-1)[0] ?? name;
-  const tag = kind === "ko" ? "KO/TKO" : kind === "sub" ? "submission" : "decision";
-  return prediction.methods.find((row) => row.label === `${last} ${tag}`)?.pct ?? null;
-}
-
-export function gradeBout(prediction: Prediction | undefined, fight: MarketFight | null): Grade | null {
+export function gradeBout(
+  prediction: Prediction | undefined,
+  fight: MarketFight | null,
+  book: string,
+): Grade | null {
   if (!fight) return null;
-  const byBook = new Map(fight.books.map((line) => [line.book, line]));
-  const books = BOOK_ORDER.map((book) => {
-    const line = byBook.get(book);
-    return { book, a: line?.a ?? null, b: line?.b ?? null };
-  });
-  const fairSamples = fight.books
-    .filter((line) => BOOK_ORDER.includes(line.book as (typeof BOOK_ORDER)[number]))
-    .map((line) => fair(line.a, line.b))
-    .filter((pair): pair is [number, number] => pair != null);
-  const noVigA = fairSamples.length
-    ? fairSamples.reduce((sum, pair) => sum + pair[0], 0) / fairSamples.length
-    : null;
-  const bestA = bestOf(fight.books, "a");
-  const bestB = bestOf(fight.books, "b");
+  const line = fight.books.find((item) => item.book === book);
+  const a = line && line.a > 1 ? line.a : null;
+  const b = line && line.b > 1 ? line.b : null;
+  const fairPair = a != null && b != null ? fair(a, b) : null;
+  const noVigA = fairPair ? fairPair[0] : null;
   const pA = prediction && !prediction.missing ? prediction.pA : null;
-  const evA = pA != null && bestA ? pA * bestA.decimal - 1 : null;
-  const evB = pA != null && bestB ? (1 - pA) * bestB.decimal - 1 : null;
+  const evA = pA != null && a != null ? pA * a - 1 : null;
+  const evB = pA != null && b != null ? (1 - pA) * b - 1 : null;
   const picks: ValuePick[] = [];
-  if (pA != null && bestA && evA != null && evA >= ML_EV) {
+  if (pA != null && a != null && evA != null && evA >= ML_EV) {
     picks.push({
       label: prediction!.aName,
-      book: bestA.book,
-      american: bestA.american,
+      book,
+      american: toAmerican(a),
       ev: evA,
       model: pA,
       market: noVigA,
       kind: "Moneyline",
     });
   }
-  if (pA != null && bestB && evB != null && evB >= ML_EV) {
+  if (pA != null && b != null && evB != null && evB >= ML_EV) {
     picks.push({
       label: prediction!.bName,
-      book: bestB.book,
-      american: bestB.american,
+      book,
+      american: toAmerican(b),
       ev: evB,
       model: 1 - pA,
       market: noVigA == null ? null : 1 - noVigA,
@@ -362,6 +328,7 @@ export function gradeBout(prediction: Prediction | undefined, fight: MarketFight
   }
   if (prediction && !prediction.missing) {
     for (const prop of fight.props) {
+      if (prop.book !== book) continue;
       const model = outcomeProb(prediction, prop.key);
       if (model == null || model < 0.08) continue;
       const implied = 1 / prop.decimal;
@@ -384,14 +351,27 @@ export function gradeBout(prediction: Prediction | undefined, fight: MarketFight
     return right.ev - left.ev;
   });
   let pass: string | null = null;
-  if (pA != null && picks.every((pick) => pick.kind !== "Moneyline")) {
+  if (pA != null && a != null && b != null && picks.every((pick) => pick.kind !== "Moneyline")) {
     const preferA = pA >= 0.5;
     const ev = preferA ? evA : evB;
-    const price = preferA ? bestA : bestB;
+    const price = preferA ? a : b;
     const name = preferA ? prediction!.aName : prediction!.bName;
-    if (ev != null && price && ev <= -0.04) {
-      pass = `${name.split(" ").slice(-1)} is the model side, but ${formatAmerican(price.american)} at ${price.book} is too short. Pass.`;
+    if (ev != null && ev <= -0.04) {
+      pass = `${name.split(" ").slice(-1)} is the model side, but ${formatAmerican(toAmerican(price))} at ${book} is too short. Pass.`;
     }
   }
-  return { books, noVigA, bestA, bestB, evA, evB, picks, pass };
+  return { book, a, b, noVigA, evA, evB, picks, pass };
+}
+
+function outcomeProb(prediction: Prediction, key: string): number | null {
+  if (key === "distance") return prediction.rounds.find((row) => row.label === "Decision")?.pct ?? null;
+  if (key === "inside") {
+    const decision = prediction.rounds.find((row) => row.label === "Decision")?.pct;
+    return decision == null ? null : 1 - decision;
+  }
+  const [side, kind] = key.split(":");
+  const name = side === "a" ? prediction.aName : prediction.bName;
+  const last = name.split(" ").slice(-1)[0] ?? name;
+  const tag = kind === "ko" ? "KO/TKO" : kind === "sub" ? "submission" : "decision";
+  return prediction.methods.find((row) => row.label === `${last} ${tag}`)?.pct ?? null;
 }

@@ -87,7 +87,7 @@ export const loadMarket = createServerFn({ method: "POST" })
       ok: true as const,
       source: "live" as const,
       asOf: new Date().toISOString(),
-      note: "Live moneylines from DraftKings, FanDuel, BetMGM, Caesars, BetRivers, Hard Rock, and Bovada.",
+      note: "Live moneylines. Value is graded against the sportsbook you select.",
       fights,
     };
   });
