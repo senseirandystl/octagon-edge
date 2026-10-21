@@ -3,7 +3,10 @@ import { RefreshCw, ScanSearch, TrendingUp } from "lucide-react";
 import profiles from "@/data/fighters.json";
 import bundled from "@/data/schedule.json";
 import { scoutFight } from "@/lib/ufc/enrich";
-import { findFighter, indexFighters, predictBout } from "@/lib/ufc/model";
+import { findFighter, indexFighters, predictBout, LEARNED_WEIGHTS, normName } from "@/lib/ufc/model";
+import learned from "@/data/learned.json";
+import { foldSettled, readLearnMemory, writeLearnMemory, type LearnExtra } from "@/lib/ufc/learn";
+import { loadSettled } from "@/lib/ufc/learn-feed";
 import {
   BOOK_ORDER,
   formatAmerican,
@@ -45,6 +48,13 @@ function money(decimal: number | null): string {
 function dollars(ev: number): string {
   return `$${Math.round(ev * 100)}`;
 }
+
+function hitRate(correct: number, fights: number): string {
+  if (!fights) return "—";
+  return `${((correct / fights) * 100).toFixed(1)}%`;
+}
+
+const emptyExtra: LearnExtra = { n: 0, correct: 0, logLoss: 0 };
 
 function OddsBlock({
   grade,
@@ -117,20 +127,38 @@ export function Predictor() {
   const [apiKey, setApiKey] = useState("");
   const [scouts, setScouts] = useState<Record<string, ScoutState>>({});
   const [market, setMarket] = useState<MarketState>(emptyMarket);
+  const [weights, setWeights] = useState<number[]>(LEARNED_WEIGHTS);
+  const [adjustments, setAdjustments] = useState<Record<string, Fighter>>({});
+  const [extra, setExtra] = useState<LearnExtra>(emptyExtra);
+  const [learnNote, setLearnNote] = useState(`Weights are current through ${learned.lastDate}.`);
 
   const event = events.find((item) => item.id === eventId) ?? events[0];
 
   useEffect(() => {
     const saved = localStorage.getItem("octagon-edge-book");
     if (saved && (BOOK_ORDER as readonly string[]).includes(saved)) setBook(saved);
+    const memory = readLearnMemory();
+    if (!memory) return;
+    setWeights(memory.weights);
+    setExtra(memory.extra);
+    setAdjustments(Object.fromEntries(memory.fighters.map((fighter) => [normName(fighter.name), fighter])));
+    if (memory.extra.n) {
+      setLearnNote(`Learned ${memory.extra.n} fights settled after ${learned.lastDate}.`);
+    }
   }, []);
 
   const predictions = useMemo(() => {
     if (!event || !analyzed) return [] as Prediction[];
     return event.bouts.map((bout) =>
-      predictBout(findFighter(index, bout.a), findFighter(index, bout.b), bout, event),
+      predictBout(
+        adjustments[normName(bout.a)] ?? findFighter(index, bout.a),
+        adjustments[normName(bout.b)] ?? findFighter(index, bout.b),
+        bout,
+        event,
+        weights,
+      ),
     );
-  }, [analyzed, event, index]);
+  }, [adjustments, analyzed, event, index, weights]);
 
   const grades = useMemo(() => {
     if (!event || !analyzed) return [] as (Grade | null)[];
@@ -171,18 +199,42 @@ export function Predictor() {
 
   async function onRefresh() {
     setRefreshing(true);
+    setLearnNote("Checking for settled fights…");
     try {
       const result = await refreshSchedule();
       setEvents(result.events);
       setStatus(result.message);
-      if (!result.events.some((item) => item.id === eventId)) {
-        setEventId(result.events[0]?.id ?? "");
-      }
-      setAnalyzed(false);
       const nextId = result.events.some((item) => item.id === eventId) ? eventId : (result.events[0]?.id ?? "");
+      if (!result.events.some((item) => item.id === eventId)) setEventId(nextId);
+      setAnalyzed(false);
+      const memory = readLearnMemory();
+      const settledPromise = loadSettled({ data: { after: memory?.through ?? learned.lastDate } });
       if (nextId) await pullOdds(nextId);
+      const settled = await settledPromise;
+      if (!settled.ok) {
+        setLearnNote(settled.note);
+      } else if (!settled.fights.length) {
+        setLearnNote(settled.note);
+      } else {
+        const next = foldSettled(memory?.weights ?? weights, settled.fights, index, {
+          seen: memory?.seen ?? [],
+          extra: memory?.extra ?? emptyExtra,
+          fighters: memory?.fighters ?? [],
+        });
+        const added = next.extra.n - (memory?.extra.n ?? 0);
+        writeLearnMemory(next);
+        setWeights(next.weights);
+        setExtra(next.extra);
+        setAdjustments(Object.fromEntries(next.fighters.map((fighter) => [normName(fighter.name), fighter])));
+        setLearnNote(
+          added
+            ? `Learned ${added} newly settled fight${added === 1 ? "" : "s"}. The next card uses the updated weights.`
+            : settled.note || "No new decisive fights to learn.",
+        );
+      }
     } catch {
       setStatus("Refresh failed. The saved card is still loaded.");
+      setLearnNote("Refresh failed. Weights are unchanged.");
     } finally {
       setRefreshing(false);
     }
@@ -515,6 +567,74 @@ export function Predictor() {
           );
         })}
       </div>
+
+      <section className="mt-8 rounded-lg border border-line bg-surface p-4">
+        <h2 className="font-display text-3xl leading-none text-fg">Learning record</h2>
+        <p className="mt-2 max-w-3xl text-sm text-muted">
+          {learned.summary.events.toLocaleString()} events, one at a time, from {learned.firstEvent} on {learned.firstDate}{" "}
+          through {learned.lastEvent} on {learned.lastDate}. UFC 1 is not in the public extract, so the walk starts at UFC
+          2. A card is scored with the weights and records known before it. Then those results move the weights.
+        </p>
+        <p className="mt-2 text-sm text-bone">{learnNote}</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <p className="text-sm">
+            <span className="text-muted">Learned</span>{" "}
+            <span className="font-semibold text-ember">
+              {hitRate(learned.summary.learned.correct, learned.summary.learned.fights)}
+            </span>
+            <span className="text-muted"> · log loss {learned.summary.learned.logLoss.toFixed(3)}</span>
+          </p>
+          <p className="text-sm">
+            <span className="text-muted">Hand weights</span>{" "}
+            <span className="text-fg">{hitRate(learned.summary.frozen.correct, learned.summary.frozen.fights)}</span>
+            <span className="text-muted"> · log loss {learned.summary.frozen.logLoss.toFixed(3)}</span>
+          </p>
+          <p className="text-sm">
+            <span className="text-muted">Elo only</span>{" "}
+            <span className="text-fg">{hitRate(learned.summary.elo.correct, learned.summary.elo.fights)}</span>
+            <span className="text-muted"> · log loss {learned.summary.elo.logLoss.toFixed(3)}</span>
+          </p>
+        </div>
+        <p className="mt-2 text-sm text-muted">
+          Since 2018 the learned weights picked {hitRate(learned.since2018.learned.correct, learned.since2018.learned.fights)}{" "}
+          against {hitRate(learned.since2018.frozen.correct, learned.since2018.frozen.fights)} for the old weights. Log loss
+          is {learned.since2018.learned.logLoss.toFixed(3)} versus {learned.since2018.frozen.logLoss.toFixed(3)}. The loop
+          is fit to the probability, which is what the bet uses.{" "}
+          {learned.summary.draws.toLocaleString()} draws and no-contests were not scored.
+          {extra.n
+            ? ` After the file: ${extra.n} more fight${extra.n === 1 ? "" : "s"}, ${hitRate(extra.correct, extra.n)}, log loss ${(extra.logLoss / extra.n).toFixed(3)}.`
+            : ""}
+        </p>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="mb-1 text-xs tracking-wide text-muted uppercase">By year</p>
+            <ul className="grid gap-1">
+              {learned.years.map((year) => (
+                <li key={year.year} className="flex flex-wrap justify-between gap-x-3 text-sm">
+                  <span className="text-muted">{year.year}</span>
+                  <span className="text-fg">
+                    {hitRate(year.learned, year.fights)}
+                    <span className="text-muted"> learned · {hitRate(year.frozen, year.fights)} old · {year.fights}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="mb-1 text-xs tracking-wide text-muted uppercase">Every event</p>
+            <ul className="grid max-h-80 gap-1 overflow-y-auto pr-1">
+              {learned.events.map((eventRow) => (
+                <li key={`${eventRow.d}-${eventRow.n}`} className="text-sm break-words">
+                  <span className="text-muted">{eventRow.d}</span> {eventRow.n}{" "}
+                  <span className="text-bone">
+                    {eventRow.f ? `${eventRow.c}/${eventRow.f}` : "no decision"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
 
       <footer className="mt-8 border-t border-line pt-4 text-sm text-muted">
         Prices are the sportsbook you selected, not the best number across books. A fight is marked mispriced when the

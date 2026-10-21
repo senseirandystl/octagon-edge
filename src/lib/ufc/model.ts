@@ -1,4 +1,9 @@
+import learned from "@/data/learned.json";
 import type { Bout, DiffRow, Fighter, Flag, Prediction, UfcEvent } from "./types";
+
+export const SIGNAL_LABELS = learned.labels;
+export const PRIOR_WEIGHTS = learned.prior;
+export const LEARNED_WEIGHTS = learned.weights;
 
 export function normName(value: string): string {
   return value
@@ -89,11 +94,50 @@ function record(fighter: Fighter): string {
   return `${fighter.w}-${fighter.l}${fighter.d ? `-${fighter.d}` : ""}`;
 }
 
+export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt: number): number[] {
+  const ageA = ageOn(a.dob, date);
+  const ageB = ageOn(b.dob, date);
+  const layoffA = daysSince(a.last, date);
+  const layoffB = daysSince(b.last, date);
+  const strikeA = a.slpm - a.sapm;
+  const strikeB = b.slpm - b.sapm;
+  const peak = (years: number) => -((years - 30) ** 2) / 55;
+  const ageEdge = ageA != null && ageB != null ? peak(ageA) - peak(ageB) : 0;
+  const wrestleA = a.td15 > 1.4 ? 1 : 0.35;
+  const wrestleB = b.td15 > 1.4 ? 1 : 0.35;
+  const minutesA = a.minutes || 1;
+  const minutesB = b.minutes || 1;
+  const minuteDelta = minutesA - minutesB;
+  const altitude = elevationFt >= 5000 ? (minuteDelta > 0 ? -1 : minuteDelta < 0 ? 1 : 0) : 0;
+  return [
+    (a.elo - b.elo) / 90,
+    (strikeA - strikeB) / 2.1,
+    ((a.acc ?? 0.45) - (b.acc ?? 0.45)) / 0.08,
+    ((a.defn ?? 0.55) - (b.defn ?? 0.55)) / 0.08,
+    ((a.td15 - b.td15) / 2.4) * (1.15 - (b.tdDef ?? 0.65)) * wrestleA,
+    -((b.td15 - a.td15) / 2.4) * (1.15 - (a.tdDef ?? 0.65)) * wrestleB,
+    ((a.tdDef ?? 0.65) - (b.tdDef ?? 0.65)) * (wrestleA + wrestleB),
+    a.reach != null && b.reach != null ? (a.reach - b.reach) / 4 : 0,
+    ageEdge,
+    formScore(a.recent) - formScore(b.recent),
+    layoffTerm(layoffA) - layoffTerm(layoffB),
+    clamp(a.streak, -4, 4) / 4 - clamp(b.streak, -4, 4) / 4,
+    Math.log(a.fights + 1) - Math.log(b.fights + 1),
+    altitude,
+  ];
+}
+
+export function signalProbability(features: number[], weights: readonly number[]): number {
+  const z = features.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
+  return clamp(logistic(z), 0.07, 0.93);
+}
+
 export function predictBout(
   a: Fighter | undefined,
   b: Fighter | undefined,
   bout: Bout,
   event: UfcEvent,
+  weights: readonly number[] = LEARNED_WEIGHTS,
 ): Prediction {
   if (!a || !b) {
     const missing = [!a ? bout.a : null, !b ? bout.b : null].filter(Boolean).join(", ");
@@ -116,27 +160,7 @@ export function predictBout(
   const strikeA = a.slpm - a.sapm;
   const strikeB = b.slpm - b.sapm;
   const peak = (years: number) => -((years - 30) ** 2) / 55;
-  const ageEdge = ageA != null && ageB != null ? peak(ageA) - peak(ageB) : 0;
-  const wrestleA = a.td15 > 1.4 ? 1 : 0.35;
-  const wrestleB = b.td15 > 1.4 ? 1 : 0.35;
-
-  const z =
-    0.62 * ((a.elo - b.elo) / 90) +
-    0.34 * ((strikeA - strikeB) / 2.1) +
-    0.16 * (((a.acc ?? 0.45) - (b.acc ?? 0.45)) / 0.08) +
-    0.16 * (((a.defn ?? 0.55) - (b.defn ?? 0.55)) / 0.08) +
-    0.28 * (((a.td15 - b.td15) / 2.4) * (1.15 - (b.tdDef ?? 0.65)) * wrestleA) -
-    0.28 * (((b.td15 - a.td15) / 2.4) * (1.15 - (a.tdDef ?? 0.65)) * wrestleB) +
-    0.2 * (((a.tdDef ?? 0.65) - (b.tdDef ?? 0.65)) * (wrestleA + wrestleB)) +
-    0.07 * (a.reach != null && b.reach != null ? (a.reach - b.reach) / 4 : 0) +
-    0.42 * ageEdge +
-    0.26 * (formScore(a.recent) - formScore(b.recent)) +
-    0.22 * (layoffTerm(layoffA) - layoffTerm(layoffB)) +
-    0.14 * (clamp(a.streak, -4, 4) / 4 - clamp(b.streak, -4, 4) / 4) +
-    0.06 * (Math.log(a.fights + 1) - Math.log(b.fights + 1)) +
-    (event.elevationFt >= 5000 ? -0.08 * Math.sign((a.minutes || 1) - (b.minutes || 1)) : 0);
-
-  const pA = clamp(logistic(z), 0.07, 0.93);
+  const pA = signalProbability(signalFeatures(a, b, event.date, event.elevationFt), weights);
   const pB = 1 - pA;
   const rounds = bout.title ? 5 : 3;
 

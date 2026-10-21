@@ -12,7 +12,11 @@ History covers 2,775 fighters through the October 17, 2026 Edmonton card. Record
 - Side-by-side differentials: record, Elo, strike differential, accuracy, defense, takedowns, takedown defense, reach, age, last five, days since last fight
 - Flags for losing streaks, long layoffs, age, limited UFC sample, chin history, stance mismatch, and high altitude
 
-The model is an interpretable weighted logistic on those signals. It runs in the browser. It is **not** a trained gradient-boosted model.
+The win probability is a weighted logistic. The weights are not the original hand settings. A walk-forward pass scores every event in the public file, from UFC 2 on March 11, 1994 through October 17, 2026, using only information known before that card, then updates the weights from that card's results. UFC 1 is not in the extract. Method and round splits stay heuristic.
+
+On the history file the learned weights went 5,120 of 8,792 (58.2%, log loss 0.670) against 58.0% and 0.696 for the frozen hand weights, and 52.2% for Elo alone. Since 2018 the pick rate is essentially tied and the probabilities are better. Refresh checks the public results file for fights after that date and keeps updating the saved weights in this browser.
+
+It is **not** a trained gradient-boosted model.
 
 ## Odds and bets
 
@@ -53,4 +57,10 @@ Download the public CSVs from [Greco1899/scrape_ufc_stats](https://github.com/Gr
 UFC_RAW=/path/to/csvs python3 scripts/build-ufc-profiles.py
 ```
 
-That rewrites `src/data/fighters.json`. Upcoming cards live in `src/data/schedule.json`.
+That rewrites `src/data/fighters.json`. Then rebuild the walk-forward weights:
+
+```bash
+UFC_RAW=/path/to/csvs python3 scripts/backtest-ufc.py
+```
+
+Upcoming cards live in `src/data/schedule.json`. The backtest writes `src/data/learned.json`.
