@@ -12,7 +12,15 @@ History covers 2,775 fighters through the October 17, 2026 Edmonton card. Record
 - Side-by-side differentials: record, Elo, strike differential, accuracy, defense, takedowns, takedown defense, reach, age, last five, days since last fight
 - Flags for losing streaks, long layoffs, age, limited UFC sample, chin history, stance mismatch, and high altitude
 
-The model is an interpretable weighted logistic on those signals. It is transparent and runs in the browser. It is **not** a trained gradient-boosted model, and it is not betting advice.
+The model is an interpretable weighted logistic on those signals. It runs in the browser. It is **not** a trained gradient-boosted model.
+
+## Odds and bets
+
+Analyze also pulls moneylines for DraftKings, FanDuel, BetMGM, Caesars, BetRivers, Hard Rock, and Bovada, plus method and distance props when a book has posted them.
+
+A side is marked **mispriced** when the best price has at least 4% expected value versus the model (8% for a prop). The card opens with those spots, and the price cell is highlighted. If the model likes a fighter but the number is too short, the fight says pass.
+
+Lines are read from public odds boards when you analyze or refresh. If that request fails, the app uses the saved board in `src/data/odds.json`. Fight nights with no posted line stay blank. Confirm the number in your account before you bet. It can move.
 
 Division names on the card are not scale weights. Weigh-ins are not ingested.
 

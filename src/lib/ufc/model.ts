@@ -231,7 +231,7 @@ export function predictBout(
     aName: a.name,
     bName: b.name,
     pA,
-    methods: methods.slice(0, 4),
+    methods,
     rounds: roundRows,
     diffs,
     flags,
