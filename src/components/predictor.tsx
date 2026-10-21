@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, ScanSearch, TrendingUp } from "lucide-react";
+import { ChevronDown, RefreshCw, ScanSearch, TrendingUp } from "lucide-react";
 import profiles from "@/data/fighters.json";
 import bundled from "@/data/schedule.json";
 import { scoutFight } from "@/lib/ufc/enrich";
@@ -131,6 +131,7 @@ export function Predictor() {
   const [adjustments, setAdjustments] = useState<Record<string, Fighter>>({});
   const [extra, setExtra] = useState<LearnExtra>(emptyExtra);
   const [learnNote, setLearnNote] = useState(`Weights are current through ${learned.lastDate}.`);
+  const [openSignals, setOpenSignals] = useState<Record<string, boolean>>({});
 
   const event = events.find((item) => item.id === eventId) ?? events[0];
 
@@ -516,6 +517,23 @@ export function Predictor() {
                     </div>
                   </div>
 
+                  <button
+                    type="button"
+                    aria-expanded={Boolean(openSignals[key])}
+                    className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-fg"
+                    onClick={() => setOpenSignals((current) => ({ ...current, [key]: !current[key] }))}
+                  >
+                    <ChevronDown
+                      className={`size-4 transition-transform ${openSignals[key] ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                    {openSignals[key]
+                      ? "Hide signals"
+                      : `Show signals${prediction.flags.length ? ` · ${prediction.flags.length} note${prediction.flags.length === 1 ? "" : "s"}` : ""}`}
+                  </button>
+
+                  {openSignals[key] ? (
+                    <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
@@ -567,6 +585,8 @@ export function Predictor() {
                       </p>
                     ) : null}
                   </div>
+                    </>
+                  ) : null}
                 </>
               )}
             </article>
