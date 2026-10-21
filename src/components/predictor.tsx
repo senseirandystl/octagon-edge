@@ -297,6 +297,7 @@ export function Predictor() {
         <p className="max-w-2xl text-muted">
           {fighters.length.toLocaleString()} fighters from UFC history through {historyAsOf}. Pick a card and your
           sportsbook, then analyze. The model is scored against that book's price only. Records are UFC bouts only.
+          Reported injuries move the percentage. Nothing on file is not a clean bill of health.
         </p>
       </header>
 
@@ -539,7 +540,7 @@ export function Predictor() {
                   {prediction.flags.length > 0 ? (
                     <ul className="mt-3 grid gap-1">
                       {prediction.flags.map((flag) => (
-                        <li key={flag.text} className="text-sm text-bone">
+                        <li key={flag.text} className="text-sm break-words text-bone">
                           {flag.text}
                         </li>
                       ))}
@@ -574,6 +575,10 @@ export function Predictor() {
           {learned.summary.events.toLocaleString()} events, one at a time, from {learned.firstEvent} on {learned.firstDate}{" "}
           through {learned.lastEvent} on {learned.lastDate}. UFC 1 is not in the public extract, so the walk starts at UFC
           2. A card is scored with the weights and records known before it. Then those results move the weights.
+          Knockdowns, control time, and head strikes are in that number, plus an injury burden that fades over about
+          seven months. The burden uses fight-ending injuries from the results file and surgeries checked against a
+          public report. On this history file the injury weight stayed on its prior, because those reports are rare. A sourced
+          surgery still moves the percentage through that prior.
         </p>
         <p className="mt-2 text-sm text-bone">{learnNote}</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -640,8 +645,10 @@ export function Predictor() {
         Prices are the sportsbook you selected, not the best number across books. A fight is marked mispriced when the
         model’s win chance beats that price by about 4% expected value, or 8% on a method or distance prop from the same
         book. Fanatics is listed, but a line shows only when a public board has posted one. Lines move. Confirm the
-        number in your account before you bet. Surgery, camp, and scale weight are not in the file — Scout notes can add
-        public context, and only when you ask.
+        number in your account before you bet. Injury burden is in the win percentage: fight-ending lines from UFC results,
+        and sourced surgeries between fights. Petr Yan’s January 2026 lumbar surgery is one of those sourced notes. A
+        missing line is not a clean bill of health. Camp quality and the scale weight are still not in the file. Scout
+        notes can add public context, and only when you ask.
       </footer>
     </main>
   );

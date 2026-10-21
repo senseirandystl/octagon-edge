@@ -132,6 +132,7 @@ def main() -> None:
             "sub": 0,
             "kd": 0,
             "ctrl": 0,
+            "head_l": 0,
         }
     )
     with (RAW / "ufc_fight_stats.csv").open(newline="", encoding="utf-8") as handle:
@@ -147,6 +148,8 @@ def main() -> None:
             bucket["sub"] += parse_int(row["SUB.ATT"])
             bucket["kd"] += parse_int(row["KD"])
             bucket["ctrl"] += parse_clock(row["CTRL"])
+            head_l, _head_a = parse_of(row.get("HEAD", ""))
+            bucket["head_l"] += head_l
 
     fights = []
     with (RAW / "ufc_fight_results.csv").open(newline="", encoding="utf-8") as handle:
@@ -209,6 +212,7 @@ def main() -> None:
             "sub": 0,
             "kd": 0,
             "ctrl": 0,
+            "head_l": 0,
             "r1_finish_wins": 0,
             "late_finish_wins": 0,
             "finish_wins": 0,
@@ -232,6 +236,7 @@ def main() -> None:
         row["sub"] += own["sub"]
         row["kd"] += own["kd"]
         row["ctrl"] += own["ctrl"]
+        row["head_l"] += own.get("head_l", 0)
 
     for fight in fights:
         left, right = fight["left"], fight["right"]
@@ -336,6 +341,7 @@ def main() -> None:
                 "sub15": round(row["sub"] / minutes * 15, 2),
                 "kd15": round(row["kd"] / minutes * 15, 2),
                 "ctrl15": round(row["ctrl"] / minutes * 15 / 60, 2),
+                "head15": round(row["head_l"] / minutes * 15, 2),
                 "r1Fin": round(row["r1_finish_wins"] / wins, 3) if wins else 0,
                 "lateFin": round(row["late_finish_wins"] / wins, 3) if wins else 0,
                 "finRate": round(row["finish_wins"] / wins, 3) if wins else 0,

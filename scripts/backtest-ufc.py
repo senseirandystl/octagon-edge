@@ -6,6 +6,8 @@ import importlib.util
 import json
 import math
 import os
+import re
+import unicodedata
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -29,8 +31,181 @@ LABELS = [
     "streak",
     "experience",
     "altitude",
+    "knockdowns",
+    "control",
+    "headStrikes",
+    "injury",
 ]
-PRIOR = [0.62, 0.34, 0.16, 0.16, 0.28, 0.28, 0.2, 0.07, 0.42, 0.26, 0.22, 0.14, 0.06, 0.08]
+PRIOR = [0.62, 0.34, 0.16, 0.16, 0.28, 0.28, 0.2, 0.07, 0.42, 0.26, 0.22, 0.14, 0.06, 0.08, 0.16, 0.14, 0.12, -0.85]
+
+INJURY_OUT = Path(os.environ.get("UFC_INJURY_OUT", ROOT / "src/data/injuries.json"))
+# Surgeries reported between fights. Fight-ending injuries are parsed from UFCStats.
+SOURCED = [
+    {
+        "fighter": "Petr Yan",
+        "date": "2026-01-15",
+        "area": "lumbar disc",
+        "severity": 1.0,
+        "detail": "Nine-hour lumbar disc surgery after UFC 323.",
+        "source": "https://www.mmafighting.com/ufc/511781/petr-yan-nothing-really-impresses-me-with-current-state-of-bantamweight-division",
+    }
+]
+
+
+STRUCTURAL = (
+    ("knee", "knee"),
+    ("ankle", "ankle"),
+    ("shoulder", "shoulder"),
+    ("elbow", "elbow"),
+    ("wrist", "wrist"),
+    ("hand", "hand"),
+    ("rib", "rib"),
+    ("lumbar", "lumbar"),
+    ("spine", "spine"),
+    ("back", "back"),
+    ("hip", "hip"),
+    ("foot", "foot"),
+    ("neck", "neck"),
+    ("jaw", "jaw"),
+    ("leg", "leg"),
+    ("arm", "arm"),
+)
+HALF_LIFE_DAYS = 220
+HORIZON_DAYS = 800
+BURDEN_FLOOR = 0.05
+BURDEN_CAP = 1.4
+
+
+def norm_name(value: str) -> str:
+    text = unicodedata.normalize("NFD", value or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def mentioned(text: str, name: str) -> bool:
+    raw = unicodedata.normalize("NFD", text or "")
+    raw = "".join(ch for ch in raw if not unicodedata.combining(ch)).lower()
+    parts = [part for part in name.split() if part]
+    if not parts:
+        return False
+    last = "".join(ch for ch in unicodedata.normalize("NFD", parts[-1]) if not unicodedata.combining(ch)).lower()
+    last = re.sub(r"[^a-z0-9]+", "", last)
+    if len(last) >= 3 and re.search(rf"\b{re.escape(last)}\b", raw):
+        return True
+    if len(parts) >= 2:
+        duo = f"{parts[-2]} {parts[-1]}"
+        duo = "".join(ch for ch in unicodedata.normalize("NFD", duo) if not unicodedata.combining(ch)).lower()
+        if duo and duo in raw:
+            return True
+    return False
+
+
+def classify_injury(text: str) -> tuple[str, float] | None:
+    low = (text or "").lower()
+    structural = next((label for key, label in STRUCTURAL if key in low), None)
+    has_cut = any(word in low for word in ("eye", "cut", "lacerat"))
+    has_injury = "injur" in low or "surgery" in low or "surgic" in low
+    if has_cut and not (structural and has_injury and "cut" not in low and "eye" not in low):
+        return "eye/cut", 0.25
+    if structural and (has_injury or "doctor" in low):
+        return structural, 0.75
+    if has_injury:
+        return "unspecified injury", 0.55
+    if "doctor" in low:
+        return "doctor stoppage", 0.45
+    return None
+
+
+def collect_injuries(fights: list[dict]) -> list[dict]:
+    items = []
+    for fight in fights:
+        blob = f"{fight.get('method_raw', '')} {fight.get('details', '')}"
+        low = blob.lower()
+        if "injur" not in low and "doctor" not in low and "surgery" not in low and "cut" not in low:
+            continue
+        classified = classify_injury(blob)
+        if classified is None:
+            continue
+        area, severity = classified
+        named = [name for name in (fight["left"], fight["right"]) if mentioned(blob, name)]
+        if len(named) == 1:
+            fighter = named[0]
+        elif fight["outcome"] == "W/L":
+            fighter = fight["right"]
+        elif fight["outcome"] == "L/W":
+            fighter = fight["left"]
+        else:
+            continue
+        detail = (fight.get("details") or fight.get("method_raw") or "").strip()
+        items.append(
+            {
+                "fighter": fighter,
+                "date": fight["date"].strftime("%Y-%m-%d"),
+                "area": area,
+                "severity": severity,
+                "kind": "result",
+                "detail": detail,
+                "source": "UFCStats result",
+                "event": fight["event"],
+            }
+        )
+    for sourced in SOURCED:
+        sourced_day = datetime.strptime(sourced["date"], "%Y-%m-%d")
+        duplicate = False
+        for item in items:
+            if norm_name(item["fighter"]) != norm_name(sourced["fighter"]):
+                continue
+            if abs((datetime.strptime(item["date"], "%Y-%m-%d") - sourced_day).days) <= 60:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        items.append(
+            {
+                "fighter": sourced["fighter"],
+                "date": sourced["date"],
+                "area": sourced["area"],
+                "severity": sourced["severity"],
+                "kind": "surgery",
+                "detail": sourced["detail"],
+                "source": sourced["source"],
+                "event": None,
+            }
+        )
+    items.sort(key=lambda item: (item["date"], item["fighter"], item["area"]))
+    return items
+
+
+def index_injuries(items: list[dict]) -> dict:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for item in items:
+        grouped[norm_name(item["fighter"])].append(item)
+    return grouped
+
+
+def burden(name: str, when: datetime, grouped: dict) -> float:
+    total = 0.0
+    for item in grouped.get(norm_name(name), ()):
+        days = (when - datetime.strptime(item["date"], "%Y-%m-%d")).days
+        if days <= 0 or days > HORIZON_DAYS:
+            continue
+        weight = item["severity"] * math.exp(-days / HALF_LIFE_DAYS)
+        if weight < BURDEN_FLOOR:
+            continue
+        total += weight
+    return min(BURDEN_CAP, total)
+
+
+def write_injuries(items: list[dict]) -> None:
+    payload = {
+        "halfLifeDays": HALF_LIFE_DAYS,
+        "horizonDays": HORIZON_DAYS,
+        "floor": BURDEN_FLOOR,
+        "cap": BURDEN_CAP,
+        "note": "Fight-ending injuries from UFCStats results, plus sourced surgeries reported between fights. No report is not a clean bill of health.",
+        "items": items,
+    }
+    INJURY_OUT.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
 
 
 def load_profiles():
@@ -123,6 +298,8 @@ def blank():
         "td_def_a": 0,
         "sub": 0,
         "kd": 0,
+        "ctrl": 0,
+        "head_l": 0,
         "finish_wins": 0,
         "r1_finish_wins": 0,
         "results": [],
@@ -160,10 +337,13 @@ def snapshot(row: dict, bio: dict) -> dict:
         "streak": streak,
         "recent": recent,
         "last": row["results"][-1]["d"] if row["results"] else None,
+        "kd15": round(row["kd"] / minutes * 15, 2) if row["fights"] else 0.0,
+        "ctrl15": round(row["ctrl"] / minutes * 15 / 60, 2) if row["fights"] else 0.0,
+        "head15": round(row["head_l"] / minutes * 15, 2) if row["fights"] else 0.0,
     }
 
 
-def features(a: dict, b: dict, when: datetime, elev: int) -> list[float]:
+def features(a: dict, b: dict, when: datetime, elev: int, burden_a: float = 0.0, burden_b: float = 0.0) -> list[float]:
     age_a = age_on(a["dob"], when)
     age_b = age_on(b["dob"], when)
 
@@ -210,6 +390,10 @@ def features(a: dict, b: dict, when: datetime, elev: int) -> list[float]:
         clamp(a["streak"], -4, 4) / 4 - clamp(b["streak"], -4, 4) / 4,
         math.log(a["fights"] + 1) - math.log(b["fights"] + 1),
         altitude,
+        (a["kd15"] - b["kd15"]) / 0.55,
+        (a["ctrl15"] - b["ctrl15"]) / 2.2,
+        (a["head15"] - b["head15"]) / 8,
+        burden_a - burden_b,
     ]
 
 
@@ -228,7 +412,7 @@ def load_history(profiles):
                 "reach": profiles.parse_reach(row["REACH"]),
                 "dob": profiles.parse_date(row["DOB"]),
             }
-    stats = defaultdict(lambda: {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0})
+    stats = defaultdict(lambda: {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0, "ctrl": 0, "head_l": 0})
     with (RAW / "ufc_fight_stats.csv").open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             key = (row["EVENT"].strip(), row["BOUT"].strip(), row["FIGHTER"].strip())
@@ -241,6 +425,9 @@ def load_history(profiles):
             bucket["td_a"] += td_a
             bucket["sub"] += profiles.parse_int(row["SUB.ATT"])
             bucket["kd"] += profiles.parse_int(row["KD"])
+            bucket["ctrl"] += profiles.parse_clock(row["CTRL"])
+            head_l, _head_a = profiles.parse_of(row.get("HEAD", ""))
+            bucket["head_l"] += head_l
     fights = []
     with (RAW / "ufc_fight_results.csv").open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -269,6 +456,8 @@ def load_history(profiles):
                     "right": right,
                     "outcome": outcome,
                     "method": profiles.method_bucket(row["METHOD"]),
+                    "method_raw": (row.get("METHOD") or "").strip(),
+                    "details": (row.get("DETAILS") or "").strip(),
                     "round": finish_round,
                     "seconds": max(seconds, 1),
                     "bout": bout,
@@ -289,16 +478,21 @@ def absorb(row: dict, own: dict, opp: dict, seconds: int) -> None:
     row["td_a"] += own["td_a"]
     row["td_def_a"] += opp["td_a"]
     row["td_def_l"] += opp["td_a"] - opp["td_l"]
-    row["sub"] += own["sub"]
-    row["kd"] += own["kd"]
+    row["sub"] += own.get("sub", 0)
+    row["kd"] += own.get("kd", 0)
+    row["ctrl"] += own.get("ctrl", 0)
+    row["head_l"] += own.get("head_l", 0)
+
+
+EMPTY_STATS = {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0, "ctrl": 0, "head_l": 0}
 
 
 def settle(career, fight, stats, left_result: str, right_result: str) -> None:
     left, right = fight["left"], fight["right"]
     key_l = (fight["event"], fight["bout"], left)
     key_r = (fight["event"], fight["bout"], right)
-    own_l = stats.get(key_l, {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0})
-    own_r = stats.get(key_r, {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0})
+    own_l = stats.get(key_l, EMPTY_STATS)
+    own_r = stats.get(key_r, EMPTY_STATS)
     absorb(career[left], own_l, own_r, fight["seconds"])
     absorb(career[right], own_r, own_l, fight["seconds"])
     expected = 1 / (1 + 10 ** ((career[right]["elo"] - career[left]["elo"]) / 400))
@@ -357,7 +551,7 @@ class Score:
         }
 
 
-def walk(cards, bios, lr: float, anchor: float):
+def walk(cards, bios, lr: float, anchor: float, injuries):
     career = defaultdict(blank)
     weights = PRIOR[:]
     learned, frozen, elo = Score(), Score(), Score()
@@ -373,7 +567,14 @@ def walk(cards, bios, lr: float, anchor: float):
         for fight in card:
             left = snapshot(career[fight["left"]], bios.get(fight["left"], {}))
             right = snapshot(career[fight["right"]], bios.get(fight["right"], {}))
-            vector = features(left, right, when, elev)
+            vector = features(
+                left,
+                right,
+                when,
+                elev,
+                burden(fight["left"], when, injuries),
+                burden(fight["right"], when, injuries),
+            )
             if fight["outcome"] == "W/L":
                 won = 1
             elif fight["outcome"] == "L/W":
@@ -444,6 +645,10 @@ def walk(cards, bios, lr: float, anchor: float):
 def main() -> None:
     profiles = load_profiles()
     bios, stats, fights = load_history(profiles)
+    items = collect_injuries(fights)
+    write_injuries(items)
+    injuries = index_injuries(items)
+    print(f"injuries={len(items)} yan_burden={burden('Petr Yan', datetime(2026, 10, 24), injuries):.3f}")
     cards = []
     current = None
     bucket = []
@@ -460,12 +665,12 @@ def main() -> None:
     if bucket:
         cards.append(bucket)
 
-    frozen_probe = walk(cards, bios, lr=0.0, anchor=0.0)
+    frozen_probe = walk(cards, bios, lr=0.0, anchor=0.0, injuries=injuries)
     best = None
     for lr in (0.03, 0.06, 0.1):
         for anchor in (0.2, 0.5, 1.0):
             learned, frozen, elo, recent_l, recent_f, weights, event_rows, draws, years = walk(
-                cards, bios, lr, anchor
+                cards, bios, lr, anchor, injuries
             )
             # Prefer a lower recent log loss, and do not accept a full-history loss much worse than frozen.
             if learned.log_loss / max(learned.n, 1) > frozen.log_loss / max(frozen.n, 1) + 0.004:
@@ -482,7 +687,7 @@ def main() -> None:
     # Rebuild year hits with one more walk at the chosen step so the table matches Score.add.
     # `years` from the selected walk is close enough if I fix the counter. Do a dedicated pass.
     learned, frozen, elo, recent_l, recent_f, weights, event_rows, draws, year_rows = replay(
-        cards, bios, lr, anchor
+        cards, bios, lr, anchor, injuries
     )
     payload = {
         "asOf": cards[-1][0]["date"].strftime("%Y-%m-%d"),
@@ -522,7 +727,7 @@ def main() -> None:
     print("weights", payload["weights"])
 
 
-def replay(cards, bios, lr: float, anchor: float):
+def replay(cards, bios, lr: float, anchor: float, injuries):
     career = defaultdict(blank)
     weights = PRIOR[:]
     learned, frozen, elo = Score(), Score(), Score()
@@ -537,7 +742,14 @@ def replay(cards, bios, lr: float, anchor: float):
         for fight in card:
             left = snapshot(career[fight["left"]], bios.get(fight["left"], {}))
             right = snapshot(career[fight["right"]], bios.get(fight["right"], {}))
-            vector = features(left, right, when, elev)
+            vector = features(
+                left,
+                right,
+                when,
+                elev,
+                burden(fight["left"], when, injuries),
+                burden(fight["right"], when, injuries),
+            )
             if fight["outcome"] == "W/L":
                 won = 1
             elif fight["outcome"] == "L/W":

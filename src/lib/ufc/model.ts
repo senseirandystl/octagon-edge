@@ -1,4 +1,5 @@
 import learned from "@/data/learned.json";
+import injuryFile from "@/data/injuries.json";
 import type { Bout, DiffRow, Fighter, Flag, Prediction, UfcEvent } from "./types";
 
 export const SIGNAL_LABELS = learned.labels;
@@ -21,6 +22,45 @@ export function indexFighters(fighters: Fighter[]): Map<string, Fighter> {
 
 export function findFighter(index: Map<string, Fighter>, name: string): Fighter | undefined {
   return index.get(normName(name));
+}
+
+type InjuryNote = {
+  fighter: string;
+  date: string;
+  area: string;
+  severity: number;
+  kind: string;
+  detail: string;
+  source: string;
+  event: string | null;
+  days: number;
+  weight: number;
+};
+
+const injuryIndex = new Map<string, (typeof injuryFile.items)[number][]>();
+for (const item of injuryFile.items) {
+  const key = normName(item.fighter);
+  const list = injuryIndex.get(key);
+  if (list) list.push(item);
+  else injuryIndex.set(key, [item]);
+}
+
+export function injuryState(name: string, date: string): { burden: number; notes: InjuryNote[] } {
+  const on = new Date(`${date}T00:00:00Z`).getTime();
+  const notes: InjuryNote[] = [];
+  let burden = 0;
+  for (const item of injuryIndex.get(normName(name)) ?? []) {
+    const then = new Date(`${item.date}T00:00:00Z`).getTime();
+    if (Number.isNaN(then) || Number.isNaN(on)) continue;
+    const days = Math.round((on - then) / 86_400_000);
+    if (days <= 0 || days > injuryFile.horizonDays) continue;
+    const weight = item.severity * Math.exp(-days / injuryFile.halfLifeDays);
+    if (weight < injuryFile.floor) continue;
+    burden += weight;
+    notes.push({ ...item, days, weight });
+  }
+  notes.sort((left, right) => right.weight - left.weight);
+  return { burden: Math.min(injuryFile.cap, burden), notes };
 }
 
 function clamp(value: number, low: number, high: number): number {
@@ -109,6 +149,8 @@ export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt
   const minutesB = b.minutes || 1;
   const minuteDelta = minutesA - minutesB;
   const altitude = elevationFt >= 5000 ? (minuteDelta > 0 ? -1 : minuteDelta < 0 ? 1 : 0) : 0;
+  const hurtA = injuryState(a.name, date).burden;
+  const hurtB = injuryState(b.name, date).burden;
   return [
     (a.elo - b.elo) / 90,
     (strikeA - strikeB) / 2.1,
@@ -124,6 +166,10 @@ export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt
     clamp(a.streak, -4, 4) / 4 - clamp(b.streak, -4, 4) / 4,
     Math.log(a.fights + 1) - Math.log(b.fights + 1),
     altitude,
+    (a.kd15 - b.kd15) / 0.55,
+    (a.ctrl15 - b.ctrl15) / 2.2,
+    (a.head15 - b.head15) / 8,
+    hurtA - hurtB,
   ];
 }
 
@@ -160,6 +206,8 @@ export function predictBout(
   const strikeA = a.slpm - a.sapm;
   const strikeB = b.slpm - b.sapm;
   const peak = (years: number) => -((years - 30) ** 2) / 55;
+  const hurtA = injuryState(a.name, event.date);
+  const hurtB = injuryState(b.name, event.date);
   const pA = signalProbability(signalFeatures(a, b, event.date, event.elevationFt), weights);
   const pB = 1 - pA;
   const rounds = bout.title ? 5 : 3;
@@ -231,6 +279,15 @@ export function predictBout(
       b: layoffB == null ? "—" : String(layoffB),
       edge: edge(layoffTerm(layoffA), layoffTerm(layoffB)),
     },
+    { label: "Knockdowns / 15", a: num(a.kd15), b: num(b.kd15), edge: edge(a.kd15, b.kd15) },
+    { label: "Control min / 15", a: num(a.ctrl15), b: num(b.ctrl15), edge: edge(a.ctrl15, b.ctrl15) },
+    { label: "Head strikes / 15", a: num(a.head15), b: num(b.head15), edge: edge(a.head15, b.head15) },
+    {
+      label: "Injury burden",
+      a: num(hurtA.burden),
+      b: num(hurtB.burden),
+      edge: edge(hurtA.burden, hurtB.burden, false),
+    },
   ];
 
   const flags: Flag[] = [];
@@ -244,6 +301,20 @@ export function predictBout(
   };
   note("a", a, ageA, layoffA);
   note("b", b, ageB, layoffB);
+  const hurt = (side: "a" | "b", fighter: Fighter, state: ReturnType<typeof injuryState>) => {
+    if (!state.notes.length) return;
+    const bits = state.notes.slice(0, 3).map((item) => {
+      const where = item.kind === "surgery" ? "sourced report" : (item.event ?? "UFCStats result");
+      return `${item.area} on ${item.date} (still ${item.weight.toFixed(2)} of ${item.severity.toFixed(2)}; ${where})`;
+    });
+    const detail = state.notes[0]?.detail ? `${state.notes[0].detail} ` : "";
+    flags.push({
+      side,
+      text: `${short(fighter.name)} injury burden ${state.burden.toFixed(2)}: ${bits.join("; ")}. ${detail}This is a reported injury, not a full medical history.`,
+    });
+  };
+  hurt("a", a, hurtA);
+  hurt("b", b, hurtB);
   if (a.stance && b.stance && a.stance !== b.stance && (a.stance === "Southpaw" || b.stance === "Southpaw")) {
     flags.push({ side: "both", text: `Stance mismatch: ${a.stance} vs ${b.stance}.` });
   }

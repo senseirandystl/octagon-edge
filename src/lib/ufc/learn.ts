@@ -76,6 +76,7 @@ export function blankFighter(name: string): Fighter {
     sub15: 0,
     kd15: 0,
     ctrl15: 0,
+    head15: 0,
     r1Fin: 0,
     lateFin: 0,
     finRate: 0,

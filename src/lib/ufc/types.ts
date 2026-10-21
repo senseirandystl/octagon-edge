@@ -25,6 +25,7 @@ export type Fighter = {
   sub15: number;
   kd15: number;
   ctrl15: number;
+  head15: number;
   r1Fin: number;
   lateFin: number;
   finRate: number;

@@ -5,6 +5,7 @@ dist
 .vinxi
 .nitro
 screenshots
+__pycache__/
 artifacts
 *.log
 .env
