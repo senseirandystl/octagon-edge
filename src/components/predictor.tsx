@@ -3,7 +3,7 @@ import { ChevronDown, RefreshCw, ScanSearch, TrendingUp } from "lucide-react";
 import profiles from "@/data/fighters.json";
 import bundled from "@/data/schedule.json";
 import { scoutFight } from "@/lib/ufc/enrich";
-import { findFighter, indexFighters, predictBout, LEARNED_WEIGHTS, normName } from "@/lib/ufc/model";
+import { findFighter, indexFighters, predictBout, LIVE_WEIGHTS, TREE_FILE, normName, setInjuryOverlay } from "@/lib/ufc/model";
 import learned from "@/data/learned.json";
 import { foldSettled, readLearnMemory, writeLearnMemory, type LearnExtra } from "@/lib/ufc/learn";
 import { loadSettled } from "@/lib/ufc/learn-feed";
@@ -19,7 +19,7 @@ import {
 } from "@/lib/ufc/odds";
 import { loadMarket } from "@/lib/ufc/odds-feed";
 import { refreshSchedule } from "@/lib/ufc/refresh";
-import type { Fighter, Prediction, UfcEvent } from "@/lib/ufc/types";
+import type { Fighter, InjuryItem, Prediction, UfcEvent } from "@/lib/ufc/types";
 
 type Provider = "grok" | "openai" | "anthropic";
 
@@ -127,9 +127,10 @@ export function Predictor() {
   const [apiKey, setApiKey] = useState("");
   const [scouts, setScouts] = useState<Record<string, ScoutState>>({});
   const [market, setMarket] = useState<MarketState>(emptyMarket);
-  const [weights, setWeights] = useState<number[]>(LEARNED_WEIGHTS);
+  const [weights, setWeights] = useState<number[]>(LIVE_WEIGHTS);
   const [adjustments, setAdjustments] = useState<Record<string, Fighter>>({});
   const [extra, setExtra] = useState<LearnExtra>(emptyExtra);
+  const [injuries, setInjuries] = useState<InjuryItem[]>([]);
   const [learnNote, setLearnNote] = useState(`Weights are current through ${learned.lastDate}.`);
   const [openSignals, setOpenSignals] = useState<Record<string, boolean>>({});
 
@@ -142,6 +143,7 @@ export function Predictor() {
     if (!memory) return;
     setWeights(memory.weights);
     setExtra(memory.extra);
+    setInjuries(memory.injuries);
     setAdjustments(Object.fromEntries(memory.fighters.map((fighter) => [normName(fighter.name), fighter])));
     if (memory.extra.n) {
       setLearnNote(`Learned ${memory.extra.n} fights settled after ${learned.lastDate}.`);
@@ -149,6 +151,7 @@ export function Predictor() {
   }, []);
 
   const predictions = useMemo(() => {
+    setInjuryOverlay(injuries);
     if (!event || !analyzed) return [] as Prediction[];
     return event.bouts.map((bout) =>
       predictBout(
@@ -159,7 +162,7 @@ export function Predictor() {
         weights,
       ),
     );
-  }, [adjustments, analyzed, event, index, weights]);
+  }, [adjustments, analyzed, event, index, injuries, weights]);
 
   const grades = useMemo(() => {
     if (!event || !analyzed) return [] as (Grade | null)[];
@@ -221,15 +224,17 @@ export function Predictor() {
           seen: memory?.seen ?? [],
           extra: memory?.extra ?? emptyExtra,
           fighters: memory?.fighters ?? [],
+          injuries: memory?.injuries ?? injuries,
         });
         const added = next.extra.n - (memory?.extra.n ?? 0);
         writeLearnMemory(next);
         setWeights(next.weights);
         setExtra(next.extra);
+        setInjuries(next.injuries);
         setAdjustments(Object.fromEntries(next.fighters.map((fighter) => [normName(fighter.name), fighter])));
         setLearnNote(
           added
-            ? `Learned ${added} newly settled fight${added === 1 ? "" : "s"}. The next card uses the updated weights.`
+            ? `Learned ${added} newly settled fight${added === 1 ? "" : "s"}. Records and strike rates were updated${TREE_FILE.live ? ", along with the residual on the tree" : ""}.`
             : settled.note || "No new decisive fights to learn.",
         );
       }
@@ -298,7 +303,10 @@ export function Predictor() {
         <p className="max-w-2xl text-muted">
           {fighters.length.toLocaleString()} fighters from UFC history through {historyAsOf}. Pick a card and your
           sportsbook, then analyze. The model is scored against that book's price only. Records are UFC bouts only.
-          Reported injuries move the percentage. Nothing on file is not a clean bill of health.
+          Reported injuries move the percentage. Nothing on file is not a clean bill of health.{" "}
+          {TREE_FILE.live
+            ? "The win chance is a tree model. Refresh can still nudge it."
+            : "The win chance stays the logistic. A tree model was tested against it."}
         </p>
       </header>
 
@@ -556,7 +564,8 @@ export function Predictor() {
                     <p className="mt-2 text-sm text-muted">
                       Last 3 strike, defense, and takedown gaps versus each career rate are in the win percentage. Opponent-adjusted
                       rates and strike location are on the card because they are in the history file. They were tested and did not
-                      improve the fit, so they do not move the percentage. Weigh-ins and short notice are not in the file.
+                      improve the fit, so they do not move the percentage. Weigh-ins, short notice, and regional records are not in
+                      the file.
                     </p>
                   </div>
 
@@ -599,14 +608,23 @@ export function Predictor() {
         <p className="mt-2 max-w-3xl text-sm text-muted">
           {learned.summary.events.toLocaleString()} events, one at a time, from {learned.firstEvent} on {learned.firstDate}{" "}
           through {learned.lastEvent} on {learned.lastDate}. UFC 1 is not in the public extract, so the walk starts at UFC
-          2. A card is scored with the weights and records known before it. Then those results move the weights.
+          2. A card is scored before its results are allowed to move anything. The logistic below is that walk: each
+          event updates the weights, and the betting line is never a feature. A gradient-boosted tree was walked the
+          same way, refit at the start of each year on fights already settled, including the card with the corners
+          swapped so winner-first early results are not a one-class trick. It is scored only in the posted order. On
+          those {TREE_FILE.summary.fights.toLocaleString()} fights the tree log loss was {TREE_FILE.summary.logLoss.toFixed(3)} against{" "}
+          {TREE_FILE.logistic.logLoss.toFixed(3)} for the logistic. Since 2018 it was {TREE_FILE.since2018.logLoss.toFixed(3)} against{" "}
+          {TREE_FILE.logisticSince2018.logLoss.toFixed(3)}.{" "}
+          {TREE_FILE.live
+            ? "That full-history gain is large enough, and the recent gap is a tie, so the win chance is the tree plus a residual that starts at zero. Refresh moves the residual, not the trees. The trees stay frozen until the history file is rebuilt."
+            : "The tree did not beat the logistic by enough to take the betting number, so the win chance stays the logistic."}{" "}
           Knockdowns, control time, and head strikes are in that number, plus an injury burden that fades over about
-          seven months. The last three fights also count, but only as a gap versus that fighter’s own career rate. Replacing
-          the career rate with the last three made the history worse. Opponent-adjusted striking and the distance, clinch,
-          ground, body, leg, and reversal splits were tested on the same walk. They did not lower the log loss, so they stay
-          off the percentage. Weigh-ins and short notice are not in the file. The burden uses fight-ending injuries from the
-          results file and surgeries checked against a public report. On this history file the injury weight stayed on its
-          prior, because those reports are rare. A sourced surgery still moves the percentage through that prior.
+          seven months. The last three fights also count, but only as a gap versus that fighter’s own career rate.
+          Opponent-adjusted striking and strike location were tested and left off the percentage. Weigh-ins, short
+          notice, camp, and regional records are not in the file. A blank injury file is not a clean bill of health.
+          The injury weight stayed on its prior because those reports are rare. A sourced surgery still moves the
+          percentage through that prior. Refresh now folds new strike totals, the last three, and new fight-ending
+          injury lines into this browser. It does not invent a surgery.
         </p>
         <p className="mt-2 text-sm text-bone">{learnNote}</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -675,8 +693,9 @@ export function Predictor() {
         book. Fanatics is listed, but a line shows only when a public board has posted one. Lines move. Confirm the
         number in your account before you bet. Injury burden is in the win percentage: fight-ending lines from UFC results,
         and sourced surgeries between fights. Petr Yan’s January 2026 lumbar surgery is one of those sourced notes. A
-        missing line is not a clean bill of health. Camp quality and the scale weight are still not in the file. Scout
-        notes can add public context, and only when you ask.
+        missing line is not a clean bill of health. Camp quality, missed weight, and short notice are still not in the
+        file. Refresh updates strike rates after a fight is in the public results. Scout notes can add public context,
+        and only when you ask. They do not move the percentage.
       </footer>
     </main>
   );

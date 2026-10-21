@@ -49,6 +49,72 @@ export type Fighter = {
   streak: number;
   recent: string;
   last: string | null;
+  marks: string[];
+  minRaw: number;
+  sigL: number;
+  sigA: number;
+  absorbed: number;
+  oppAtt: number;
+  tdL: number;
+  tdA: number;
+  tdDefL: number;
+  tdDefA: number;
+  kd: number;
+  ctrlSec: number;
+  headL: number;
+  bodyL: number;
+  legL: number;
+  distL: number;
+  clinchL: number;
+  groundL: number;
+  rev: number;
+  subAtt: number;
+  adjSNum: number;
+  adjSDen: number;
+  adjTNum: number;
+  adjTDen: number;
+  r1FinW: number;
+  lateFinW: number;
+  recent3: FightWindow[];
+};
+
+export type FightWindow = {
+  min: number;
+  sigL: number;
+  sigA: number;
+  abs: number;
+  oppA: number;
+  tdL: number;
+  tdAgainst: number;
+  tdConceded: number;
+};
+
+export type RoundStat = {
+  sigL: number;
+  sigA: number;
+  tdL: number;
+  tdA: number;
+  kd: number;
+  ctrl: number;
+  headL: number;
+  bodyL: number;
+  legL: number;
+  distL: number;
+  clinchL: number;
+  groundL: number;
+  rev: number;
+  sub: number;
+};
+
+export type InjuryItem = {
+  fighter: string;
+  date: string;
+  area: string;
+  severity: number;
+  kind: string;
+  detail: string;
+  source: string;
+  event: string | null;
 };
 
 export type Bout = {

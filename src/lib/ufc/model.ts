@@ -1,10 +1,16 @@
 import learned from "@/data/learned.json";
 import injuryFile from "@/data/injuries.json";
-import type { Bout, DiffRow, Fighter, Flag, Prediction, UfcEvent } from "./types";
+import trees from "@/data/trees.json";
+import type { Bout, DiffRow, Fighter, Flag, InjuryItem, Prediction, UfcEvent } from "./types";
 
 export const SIGNAL_LABELS = learned.labels;
 export const PRIOR_WEIGHTS = learned.prior;
 export const LEARNED_WEIGHTS = learned.weights;
+export const TREE_FILE = trees;
+export const MODEL_KIND = trees.live ? ("residual" as const) : ("logistic" as const);
+export const LIVE_WEIGHTS = trees.live ? LEARNED_WEIGHTS.map(() => 0) : LEARNED_WEIGHTS;
+export const RESIDUAL_LR = trees.residualLr;
+export const RESIDUAL_ANCHOR = trees.residualAnchor;
 
 export function normName(value: string): string {
   return value
@@ -45,11 +51,26 @@ for (const item of injuryFile.items) {
   else injuryIndex.set(key, [item]);
 }
 
+const overlayIndex = new Map<string, InjuryItem[]>();
+
+export function setInjuryOverlay(items: InjuryItem[]): void {
+  overlayIndex.clear();
+  for (const item of items) {
+    const key = normName(item.fighter);
+    const list = overlayIndex.get(key);
+    if (list) list.push(item);
+    else overlayIndex.set(key, [item]);
+  }
+}
+
 export function injuryState(name: string, date: string): { burden: number; notes: InjuryNote[] } {
   const on = new Date(`${date}T00:00:00Z`).getTime();
   const notes: InjuryNote[] = [];
   let burden = 0;
-  for (const item of injuryIndex.get(normName(name)) ?? []) {
+  const key = normName(name);
+  const filed = new Set((injuryIndex.get(key) ?? []).map((item) => item.date));
+  const items = [...(injuryIndex.get(key) ?? []), ...(overlayIndex.get(key) ?? []).filter((item) => !filed.has(item.date))];
+  for (const item of items) {
     const then = new Date(`${item.date}T00:00:00Z`).getTime();
     if (Number.isNaN(then) || Number.isNaN(on)) continue;
     const days = Math.round((on - then) / 86_400_000);
@@ -189,8 +210,26 @@ export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt
   ];
 }
 
+export function treeLogit(features: number[]): number {
+  let score = trees.init;
+  for (const tree of trees.trees) {
+    let node = 0;
+    while (tree.l[node] !== -1) {
+      const feature = tree.f[node];
+      node = features[feature] <= tree.t[node] ? tree.l[node] : tree.r[node];
+    }
+    score += trees.learningRate * tree.v[node];
+  }
+  return score;
+}
+
+export function baseLogit(features: number[]): number {
+  return trees.live ? treeLogit(features) : 0;
+}
+
 export function signalProbability(features: number[], weights: readonly number[]): number {
-  const z = features.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
+  const linear = features.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
+  const z = baseLogit(features) + linear;
   return clamp(logistic(z), 0.07, 0.93);
 }
 
@@ -199,7 +238,7 @@ export function predictBout(
   b: Fighter | undefined,
   bout: Bout,
   event: UfcEvent,
-  weights: readonly number[] = LEARNED_WEIGHTS,
+  weights: readonly number[] = LIVE_WEIGHTS,
 ): Prediction {
   if (!a || !b) {
     const missing = [!a ? bout.a : null, !b ? bout.b : null].filter(Boolean).join(", ");
