@@ -134,6 +134,19 @@ function record(fighter: Fighter): string {
   return `${fighter.w}-${fighter.l}${fighter.d ? `-${fighter.d}` : ""}`;
 }
 
+function recentGap(
+  recentA: number | null,
+  recentB: number | null,
+  careerA: number,
+  careerB: number,
+  scale: number,
+): number {
+  if (recentA == null && recentB == null) return 0;
+  const deltaA = recentA == null ? 0 : recentA - careerA;
+  const deltaB = recentB == null ? 0 : recentB - careerB;
+  return (deltaA - deltaB) / scale;
+}
+
 export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt: number): number[] {
   const ageA = ageOn(a.dob, date);
   const ageB = ageOn(b.dob, date);
@@ -170,6 +183,9 @@ export function signalFeatures(a: Fighter, b: Fighter, date: string, elevationFt
     (a.ctrl15 - b.ctrl15) / 2.2,
     (a.head15 - b.head15) / 8,
     hurtA - hurtB,
+    recentGap(a.r3Strike, b.r3Strike, strikeA, strikeB, 2.1),
+    recentGap(a.r3Def, b.r3Def, a.defn ?? 0.55, b.defn ?? 0.55, 0.08),
+    recentGap(a.r3Td, b.r3Td, a.td15, b.td15, 2.4),
   ];
 }
 
@@ -263,6 +279,19 @@ export function predictBout(
     },
     { label: "Accuracy", a: pct(a.acc), b: pct(b.acc), edge: edge(a.acc, b.acc) },
     { label: "Strike defense", a: pct(a.defn), b: pct(b.defn), edge: edge(a.defn, b.defn) },
+    {
+      label: "Last 3 strike diff",
+      a: a.r3Strike == null ? "—" : num(a.r3Strike),
+      b: b.r3Strike == null ? "—" : num(b.r3Strike),
+      edge: edge(a.r3Strike, b.r3Strike),
+    },
+    { label: "Last 3 defense", a: pct(a.r3Def), b: pct(b.r3Def), edge: edge(a.r3Def, b.r3Def) },
+    {
+      label: "Last 3 takedowns",
+      a: a.r3Td == null ? "—" : num(a.r3Td),
+      b: b.r3Td == null ? "—" : num(b.r3Td),
+      edge: edge(a.r3Td, b.r3Td),
+    },
     { label: "Takedowns / 15", a: num(a.td15), b: num(b.td15), edge: edge(a.td15, b.td15) },
     { label: "Takedown defense", a: pct(a.tdDef), b: pct(b.tdDef), edge: edge(a.tdDef, b.tdDef) },
     { label: "Reach", a: a.reach ? `${a.reach}"` : "—", b: b.reach ? `${b.reach}"` : "—", edge: edge(a.reach, b.reach) },
@@ -288,6 +317,14 @@ export function predictBout(
       b: num(hurtB.burden),
       edge: edge(hurtA.burden, hurtB.burden, false),
     },
+    { label: "Opp-adjusted strike", a: num(a.adjStrike), b: num(b.adjStrike), edge: edge(a.adjStrike, b.adjStrike) },
+    { label: "Opp-adjusted takedowns", a: num(a.adjTd), b: num(b.adjTd), edge: edge(a.adjTd, b.adjTd) },
+    { label: "Distance strikes", a: pct(a.distShare), b: pct(b.distShare), edge: edge(a.distShare, b.distShare) },
+    { label: "Clinch strikes", a: pct(a.clinchShare), b: pct(b.clinchShare), edge: edge(a.clinchShare, b.clinchShare) },
+    { label: "Ground strikes", a: pct(a.groundShare), b: pct(b.groundShare), edge: edge(a.groundShare, b.groundShare) },
+    { label: "Body strikes", a: pct(a.bodyShare), b: pct(b.bodyShare), edge: edge(a.bodyShare, b.bodyShare) },
+    { label: "Leg strikes", a: pct(a.legShare), b: pct(b.legShare), edge: edge(a.legShare, b.legShare) },
+    { label: "Reversals / 15", a: num(a.rev15), b: num(b.rev15), edge: edge(a.rev15, b.rev15) },
   ];
 
   const flags: Flag[] = [];
@@ -301,6 +338,19 @@ export function predictBout(
   };
   note("a", a, ageA, layoffA);
   note("b", b, ageB, layoffB);
+  const formNote = (side: "a" | "b", fighter: Fighter) => {
+    if (fighter.r3Strike == null) return;
+    const career = fighter.slpm - fighter.sapm;
+    const gap = fighter.r3Strike - career;
+    if (Math.abs(gap) < 1) return;
+    const way = gap > 0 ? "above" : "below";
+    flags.push({
+      side,
+      text: `${short(fighter.name)} is striking ${way} the career rate over the last 3 UFC fights (${fighter.r3Strike.toFixed(2)} differential versus ${career.toFixed(2)}).`,
+    });
+  };
+  formNote("a", a);
+  formNote("b", b);
   const hurt = (side: "a" | "b", fighter: Fighter, state: ReturnType<typeof injuryState>) => {
     if (!state.notes.length) return;
     const bits = state.notes.slice(0, 3).map((item) => {

@@ -102,6 +102,137 @@ def fight_seconds(rnd: str, clock: str, time_format: str) -> int:
     return (finish_round - 1) * 300 + min(parse_clock(clock), 300)
 
 
+FALLBACK_SAPM = 3.8
+FALLBACK_TD = 1.6
+
+
+def empty_round_stats() -> dict:
+    return {
+        "sig_l": 0,
+        "sig_a": 0,
+        "td_l": 0,
+        "td_a": 0,
+        "sub": 0,
+        "kd": 0,
+        "ctrl": 0,
+        "head_l": 0,
+        "body_l": 0,
+        "leg_l": 0,
+        "dist_l": 0,
+        "clinch_l": 0,
+        "ground_l": 0,
+        "rev": 0,
+    }
+
+
+def add_round(bucket: dict, row: dict) -> None:
+    sig_l, sig_a = parse_of(row.get("SIG.STR.", ""))
+    td_l, td_a = parse_of(row.get("TD", ""))
+    head_l, _head_a = parse_of(row.get("HEAD", ""))
+    body_l, _body_a = parse_of(row.get("BODY", ""))
+    leg_l, _leg_a = parse_of(row.get("LEG", ""))
+    dist_l, _dist_a = parse_of(row.get("DISTANCE", ""))
+    clinch_l, _clinch_a = parse_of(row.get("CLINCH", ""))
+    ground_l, _ground_a = parse_of(row.get("GROUND", ""))
+    bucket["sig_l"] += sig_l
+    bucket["sig_a"] += sig_a
+    bucket["td_l"] += td_l
+    bucket["td_a"] += td_a
+    bucket["sub"] += parse_int(row.get("SUB.ATT", ""))
+    bucket["kd"] += parse_int(row.get("KD", ""))
+    bucket["ctrl"] += parse_clock(row.get("CTRL", ""))
+    bucket["head_l"] += head_l
+    bucket["body_l"] += body_l
+    bucket["leg_l"] += leg_l
+    bucket["dist_l"] += dist_l
+    bucket["clinch_l"] += clinch_l
+    bucket["ground_l"] += ground_l
+    bucket["rev"] += parse_int(row.get("REV.", ""))
+
+
+def pre_level(row: dict) -> dict | None:
+    if row["fights"] <= 0 or row["minutes"] <= 0:
+        return None
+    return {
+        "sapm": row["absorbed"] / row["minutes"],
+        "td_allowed": (row["td_def_a"] - row["td_def_l"]) / row["minutes"] * 15,
+    }
+
+
+def apply_fight_stats(row: dict, own: dict, opp: dict, seconds: int, opp_level: dict | None) -> None:
+    minutes = max(seconds, 1) / 60
+    sapm = FALLBACK_SAPM if opp_level is None else opp_level["sapm"]
+    allowed = FALLBACK_TD if opp_level is None else opp_level["td_allowed"]
+    sig_l = own.get("sig_l", 0)
+    td_l = own.get("td_l", 0)
+    row["adj_s_num"] += sig_l - sapm * minutes
+    row["adj_s_den"] += minutes
+    row["adj_t_num"] += td_l * 15 - allowed * minutes
+    row["adj_t_den"] += minutes
+    row["window"].append(
+        {
+            "min": minutes,
+            "sig_l": sig_l,
+            "sig_a": own.get("sig_a", 0),
+            "abs": opp.get("sig_l", 0),
+            "opp_a": opp.get("sig_a", 0),
+            "td_l": td_l,
+            "td_against": opp.get("td_a", 0),
+            "td_conceded": opp.get("td_l", 0),
+        }
+    )
+    if len(row["window"]) > 3:
+        row["window"] = row["window"][-3:]
+    row["fights"] += 1
+    row["minutes"] += minutes
+    row["sig_l"] += sig_l
+    row["sig_a"] += own.get("sig_a", 0)
+    row["absorbed"] += opp.get("sig_l", 0)
+    row["opp_att"] += opp.get("sig_a", 0)
+    row["td_l"] += td_l
+    row["td_a"] += own.get("td_a", 0)
+    row["td_def_a"] += opp.get("td_a", 0)
+    row["td_def_l"] += opp.get("td_a", 0) - opp.get("td_l", 0)
+    row["sub"] += own.get("sub", 0)
+    row["kd"] += own.get("kd", 0)
+    row["ctrl"] += own.get("ctrl", 0)
+    row["head_l"] += own.get("head_l", 0)
+    row["body_l"] += own.get("body_l", 0)
+    row["leg_l"] += own.get("leg_l", 0)
+    row["dist_l"] += own.get("dist_l", 0)
+    row["clinch_l"] += own.get("clinch_l", 0)
+    row["ground_l"] += own.get("ground_l", 0)
+    row["rev"] += own.get("rev", 0)
+
+
+def recent_block(window: list[dict]) -> dict | None:
+    if len(window) < 2:
+        return None
+    minutes = sum(item["min"] for item in window)
+    if minutes < 8:
+        return None
+    sig_l = sum(item["sig_l"] for item in window)
+    sig_a = sum(item["sig_a"] for item in window)
+    absorbed = sum(item["abs"] for item in window)
+    opp_a = sum(item["opp_a"] for item in window)
+    td_l = sum(item["td_l"] for item in window)
+    td_against = sum(item["td_against"] for item in window)
+    td_conceded = sum(item["td_conceded"] for item in window)
+    return {
+        "strike": sig_l / minutes - absorbed / minutes,
+        "acc": (sig_l / sig_a) if sig_a else None,
+        "defn": (1 - absorbed / opp_a) if opp_a else None,
+        "td15": td_l / minutes * 15,
+        "tdDef": ((td_against - td_conceded) / td_against) if td_against else None,
+    }
+
+
+def share(part: float, whole: float) -> float | None:
+    if whole <= 0:
+        return None
+    return part / whole
+
+
 def main() -> None:
     events: dict[str, dict] = {}
     with (RAW / "ufc_event_details.csv").open(newline="", encoding="utf-8") as handle:
@@ -123,33 +254,11 @@ def main() -> None:
                 "weight": parse_weight(row["WEIGHT"]),
             }
 
-    stats: dict[tuple[str, str, str], dict] = defaultdict(
-        lambda: {
-            "sig_l": 0,
-            "sig_a": 0,
-            "td_l": 0,
-            "td_a": 0,
-            "sub": 0,
-            "kd": 0,
-            "ctrl": 0,
-            "head_l": 0,
-        }
-    )
+    stats: dict[tuple[str, str, str], dict] = defaultdict(empty_round_stats)
     with (RAW / "ufc_fight_stats.csv").open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             key = (row["EVENT"].strip(), row["BOUT"].strip(), row["FIGHTER"].strip())
-            sig_l, sig_a = parse_of(row["SIG.STR."])
-            td_l, td_a = parse_of(row["TD"])
-            bucket = stats[key]
-            bucket["sig_l"] += sig_l
-            bucket["sig_a"] += sig_a
-            bucket["td_l"] += td_l
-            bucket["td_a"] += td_a
-            bucket["sub"] += parse_int(row["SUB.ATT"])
-            bucket["kd"] += parse_int(row["KD"])
-            bucket["ctrl"] += parse_clock(row["CTRL"])
-            head_l, _head_a = parse_of(row.get("HEAD", ""))
-            bucket["head_l"] += head_l
+            add_round(stats[key], row)
 
     fights = []
     with (RAW / "ufc_fight_results.csv").open(newline="", encoding="utf-8") as handle:
@@ -186,7 +295,7 @@ def main() -> None:
                 }
             )
 
-    fights.sort(key=lambda item: item["date"])
+    fights.sort(key=lambda item: (item["date"], item["event"]))
 
     career: dict[str, dict] = defaultdict(
         lambda: {
@@ -213,6 +322,17 @@ def main() -> None:
             "kd": 0,
             "ctrl": 0,
             "head_l": 0,
+            "body_l": 0,
+            "leg_l": 0,
+            "dist_l": 0,
+            "clinch_l": 0,
+            "ground_l": 0,
+            "rev": 0,
+            "adj_s_num": 0.0,
+            "adj_s_den": 0.0,
+            "adj_t_num": 0.0,
+            "adj_t_den": 0.0,
+            "window": [],
             "r1_finish_wins": 0,
             "late_finish_wins": 0,
             "finish_wins": 0,
@@ -221,29 +341,14 @@ def main() -> None:
         }
     )
 
-    def absorb(name: str, own: dict, opp: dict, seconds: int) -> None:
-        row = career[name]
-        row["fights"] += 1
-        row["minutes"] += seconds / 60
-        row["sig_l"] += own["sig_l"]
-        row["sig_a"] += own["sig_a"]
-        row["absorbed"] += opp["sig_l"]
-        row["opp_att"] += opp["sig_a"]
-        row["td_l"] += own["td_l"]
-        row["td_a"] += own["td_a"]
-        row["td_def_a"] += opp["td_a"]
-        row["td_def_l"] += opp["td_a"] - opp["td_l"]
-        row["sub"] += own["sub"]
-        row["kd"] += own["kd"]
-        row["ctrl"] += own["ctrl"]
-        row["head_l"] += own.get("head_l", 0)
-
     for fight in fights:
         left, right = fight["left"], fight["right"]
-        own_l = stats.get((fight["event"], f"{left} vs. {right}", left), stats[(fight["event"], f"{left} vs. {right}", left)])
-        own_r = stats.get((fight["event"], f"{left} vs. {right}", right), stats[(fight["event"], f"{left} vs. {right}", right)])
-        absorb(left, own_l, own_r, fight["seconds"])
-        absorb(right, own_r, own_l, fight["seconds"])
+        own_l = stats.get((fight["event"], f"{left} vs. {right}", left), empty_round_stats())
+        own_r = stats.get((fight["event"], f"{left} vs. {right}", right), empty_round_stats())
+        level_l = pre_level(career[left])
+        level_r = pre_level(career[right])
+        apply_fight_stats(career[left], own_l, own_r, fight["seconds"], level_r)
+        apply_fight_stats(career[right], own_r, own_l, fight["seconds"], level_l)
 
         expected_l = 1 / (1 + 10 ** ((career[right]["elo"] - career[left]["elo"]) / 400))
         if fight["outcome"] == "W/L":
@@ -313,6 +418,7 @@ def main() -> None:
                 streak += step
             else:
                 break
+        recent_rates = recent_block(row["window"])
         profiles.append(
             {
                 "name": name,
@@ -342,6 +448,18 @@ def main() -> None:
                 "kd15": round(row["kd"] / minutes * 15, 2),
                 "ctrl15": round(row["ctrl"] / minutes * 15 / 60, 2),
                 "head15": round(row["head_l"] / minutes * 15, 2),
+                "r3Strike": round(recent_rates["strike"], 2) if recent_rates else None,
+                "r3Acc": round(recent_rates["acc"], 3) if recent_rates and recent_rates["acc"] is not None else None,
+                "r3Def": round(recent_rates["defn"], 3) if recent_rates and recent_rates["defn"] is not None else None,
+                "r3Td": round(recent_rates["td15"], 2) if recent_rates else None,
+                "adjStrike": round(row["adj_s_num"] / row["adj_s_den"], 2) if row["adj_s_den"] else 0.0,
+                "adjTd": round(row["adj_t_num"] / row["adj_t_den"], 2) if row["adj_t_den"] else 0.0,
+                "distShare": round(share(row["dist_l"], row["sig_l"]), 3) if share(row["dist_l"], row["sig_l"]) is not None else None,
+                "clinchShare": round(share(row["clinch_l"], row["sig_l"]), 3) if share(row["clinch_l"], row["sig_l"]) is not None else None,
+                "groundShare": round(share(row["ground_l"], row["sig_l"]), 3) if share(row["ground_l"], row["sig_l"]) is not None else None,
+                "bodyShare": round(share(row["body_l"], row["sig_l"]), 3) if share(row["body_l"], row["sig_l"]) is not None else None,
+                "legShare": round(share(row["leg_l"], row["sig_l"]), 3) if share(row["leg_l"], row["sig_l"]) is not None else None,
+                "rev15": round(row["rev"] / minutes * 15, 2),
                 "r1Fin": round(row["r1_finish_wins"] / wins, 3) if wins else 0,
                 "lateFin": round(row["late_finish_wins"] / wins, 3) if wins else 0,
                 "finRate": round(row["finish_wins"] / wins, 3) if wins else 0,

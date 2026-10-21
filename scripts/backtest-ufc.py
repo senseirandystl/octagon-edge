@@ -35,8 +35,11 @@ LABELS = [
     "control",
     "headStrikes",
     "injury",
+    "recentStrike",
+    "recentDef",
+    "recentTd",
 ]
-PRIOR = [0.62, 0.34, 0.16, 0.16, 0.28, 0.28, 0.2, 0.07, 0.42, 0.26, 0.22, 0.14, 0.06, 0.08, 0.16, 0.14, 0.12, -0.85]
+PRIOR = [0.62, 0.34, 0.16, 0.16, 0.28, 0.28, 0.2, 0.07, 0.42, 0.26, 0.22, 0.14, 0.06, 0.08, 0.16, 0.14, 0.12, -0.85, 0, 0, 0]
 
 INJURY_OUT = Path(os.environ.get("UFC_INJURY_OUT", ROOT / "src/data/injuries.json"))
 # Surgeries reported between fights. Fight-ending injuries are parsed from UFCStats.
@@ -300,10 +303,43 @@ def blank():
         "kd": 0,
         "ctrl": 0,
         "head_l": 0,
+        "body_l": 0,
+        "leg_l": 0,
+        "dist_l": 0,
+        "clinch_l": 0,
+        "ground_l": 0,
+        "rev": 0,
+        "adj_s_num": 0.0,
+        "adj_s_den": 0.0,
+        "adj_t_num": 0.0,
+        "adj_t_den": 0.0,
+        "window": [],
         "finish_wins": 0,
         "r1_finish_wins": 0,
         "results": [],
         "elo": 1500.0,
+    }
+
+
+def window_rates(window: list[dict]) -> dict | None:
+    if len(window) < 2:
+        return None
+    minutes = sum(item["min"] for item in window)
+    if minutes < 8:
+        return None
+    sig_l = sum(item["sig_l"] for item in window)
+    sig_a = sum(item["sig_a"] for item in window)
+    absorbed = sum(item["abs"] for item in window)
+    opp_a = sum(item["opp_a"] for item in window)
+    td_l = sum(item["td_l"] for item in window)
+    td_against = sum(item["td_against"] for item in window)
+    td_conceded = sum(item["td_conceded"] for item in window)
+    return {
+        "strike": sig_l / minutes - absorbed / minutes,
+        "acc": (sig_l / sig_a) if sig_a else None,
+        "defn": (1 - absorbed / opp_a) if opp_a else None,
+        "td15": td_l / minutes * 15,
+        "tdDef": ((td_against - td_conceded) / td_against) if td_against else None,
     }
 
 
@@ -322,6 +358,12 @@ def snapshot(row: dict, bio: dict) -> dict:
             streak += step
         else:
             break
+    rates = window_rates(row["window"])
+    dist = row["dist_l"] / row["sig_l"] if row["sig_l"] else None
+    clinch = row["clinch_l"] / row["sig_l"] if row["sig_l"] else None
+    ground = row["ground_l"] / row["sig_l"] if row["sig_l"] else None
+    body = row["body_l"] / row["sig_l"] if row["sig_l"] else None
+    leg = row["leg_l"] / row["sig_l"] if row["sig_l"] else None
     return {
         "elo": round(row["elo"], 1),
         "slpm": round(row["sig_l"] / minutes, 2) if row["fights"] else 0.0,
@@ -340,7 +382,30 @@ def snapshot(row: dict, bio: dict) -> dict:
         "kd15": round(row["kd"] / minutes * 15, 2) if row["fights"] else 0.0,
         "ctrl15": round(row["ctrl"] / minutes * 15 / 60, 2) if row["fights"] else 0.0,
         "head15": round(row["head_l"] / minutes * 15, 2) if row["fights"] else 0.0,
+        "r3Strike": round(rates["strike"], 2) if rates else None,
+        "r3Acc": round(rates["acc"], 3) if rates and rates["acc"] is not None else None,
+        "r3Def": round(rates["defn"], 3) if rates and rates["defn"] is not None else None,
+        "r3Td": round(rates["td15"], 2) if rates else None,
+        "adjStrike": round(row["adj_s_num"] / row["adj_s_den"], 2) if row["adj_s_den"] else 0.0,
+        "adjTd": round(row["adj_t_num"] / row["adj_t_den"], 2) if row["adj_t_den"] else 0.0,
+        "distShare": None if dist is None else round(dist, 3),
+        "clinchShare": None if clinch is None else round(clinch, 3),
+        "groundShare": None if ground is None else round(ground, 3),
+        "bodyShare": None if body is None else round(body, 3),
+        "legShare": None if leg is None else round(leg, 3),
+        "rev15": round(row["rev"] / minutes * 15, 2) if row["fights"] else 0.0,
     }
+
+
+def recent_gap(recent_a, recent_b, career_a, career_b, scale: float) -> float:
+    """Last-three rate minus this fighter's own career rate. Zero when the window is too small."""
+    if recent_a is None and recent_b is None:
+        return 0.0
+    if career_a is None or career_b is None:
+        return 0.0
+    delta_a = 0.0 if recent_a is None else recent_a - career_a
+    delta_b = 0.0 if recent_b is None else recent_b - career_b
+    return (delta_a - delta_b) / scale
 
 
 def features(a: dict, b: dict, when: datetime, elev: int, burden_a: float = 0.0, burden_b: float = 0.0) -> list[float]:
@@ -375,7 +440,7 @@ def features(a: dict, b: dict, when: datetime, elev: int, burden_a: float = 0.0,
         altitude = -1.0 if delta > 0 else 1.0 if delta < 0 else 0.0
     else:
         altitude = 0.0
-    return [
+    vector = [
         (a["elo"] - b["elo"]) / 90,
         (strike_a - strike_b) / 2.1,
         (acc_a - acc_b) / 0.08,
@@ -394,7 +459,13 @@ def features(a: dict, b: dict, when: datetime, elev: int, burden_a: float = 0.0,
         (a["ctrl15"] - b["ctrl15"]) / 2.2,
         (a["head15"] - b["head15"]) / 8,
         burden_a - burden_b,
+        recent_gap(a.get("r3Strike"), b.get("r3Strike"), strike_a, strike_b, 2.1),
+        recent_gap(a.get("r3Def"), b.get("r3Def"), def_a, def_b, 0.08),
+        recent_gap(a.get("r3Td"), b.get("r3Td"), a["td15"], b["td15"], 2.4),
     ]
+    if len(vector) != len(LABELS):
+        raise RuntimeError(f"feature length {len(vector)} != {len(LABELS)}")
+    return vector
 
 
 def load_history(profiles):
@@ -412,22 +483,11 @@ def load_history(profiles):
                 "reach": profiles.parse_reach(row["REACH"]),
                 "dob": profiles.parse_date(row["DOB"]),
             }
-    stats = defaultdict(lambda: {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0, "ctrl": 0, "head_l": 0})
+    stats = defaultdict(profiles.empty_round_stats)
     with (RAW / "ufc_fight_stats.csv").open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             key = (row["EVENT"].strip(), row["BOUT"].strip(), row["FIGHTER"].strip())
-            sig_l, sig_a = profiles.parse_of(row["SIG.STR."])
-            td_l, td_a = profiles.parse_of(row["TD"])
-            bucket = stats[key]
-            bucket["sig_l"] += sig_l
-            bucket["sig_a"] += sig_a
-            bucket["td_l"] += td_l
-            bucket["td_a"] += td_a
-            bucket["sub"] += profiles.parse_int(row["SUB.ATT"])
-            bucket["kd"] += profiles.parse_int(row["KD"])
-            bucket["ctrl"] += profiles.parse_clock(row["CTRL"])
-            head_l, _head_a = profiles.parse_of(row.get("HEAD", ""))
-            bucket["head_l"] += head_l
+            profiles.add_round(stats[key], row)
     fights = []
     with (RAW / "ufc_fight_results.csv").open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -467,34 +527,19 @@ def load_history(profiles):
     return bios, stats, fights
 
 
-def absorb(row: dict, own: dict, opp: dict, seconds: int) -> None:
-    row["fights"] += 1
-    row["minutes"] += seconds / 60
-    row["sig_l"] += own["sig_l"]
-    row["sig_a"] += own["sig_a"]
-    row["absorbed"] += opp["sig_l"]
-    row["opp_att"] += opp["sig_a"]
-    row["td_l"] += own["td_l"]
-    row["td_a"] += own["td_a"]
-    row["td_def_a"] += opp["td_a"]
-    row["td_def_l"] += opp["td_a"] - opp["td_l"]
-    row["sub"] += own.get("sub", 0)
-    row["kd"] += own.get("kd", 0)
-    row["ctrl"] += own.get("ctrl", 0)
-    row["head_l"] += own.get("head_l", 0)
-
-
-EMPTY_STATS = {"sig_l": 0, "sig_a": 0, "td_l": 0, "td_a": 0, "sub": 0, "kd": 0, "ctrl": 0, "head_l": 0}
+P = None
 
 
 def settle(career, fight, stats, left_result: str, right_result: str) -> None:
     left, right = fight["left"], fight["right"]
     key_l = (fight["event"], fight["bout"], left)
     key_r = (fight["event"], fight["bout"], right)
-    own_l = stats.get(key_l, EMPTY_STATS)
-    own_r = stats.get(key_r, EMPTY_STATS)
-    absorb(career[left], own_l, own_r, fight["seconds"])
-    absorb(career[right], own_r, own_l, fight["seconds"])
+    own_l = stats.get(key_l, P.empty_round_stats())
+    own_r = stats.get(key_r, P.empty_round_stats())
+    level_l = P.pre_level(career[left])
+    level_r = P.pre_level(career[right])
+    P.apply_fight_stats(career[left], own_l, own_r, fight["seconds"], level_r)
+    P.apply_fight_stats(career[right], own_r, own_l, fight["seconds"], level_l)
     expected = 1 / (1 + 10 ** ((career[right]["elo"] - career[left]["elo"]) / 400))
     score = 1.0 if fight["outcome"] == "W/L" else 0.0 if fight["outcome"] == "L/W" else 0.5
     career[left]["elo"] += 28 * (score - expected)
@@ -643,8 +688,9 @@ def walk(cards, bios, lr: float, anchor: float, injuries):
 
 
 def main() -> None:
-    profiles = load_profiles()
-    bios, stats, fights = load_history(profiles)
+    global P
+    P = load_profiles()
+    bios, stats, fights = load_history(P)
     items = collect_injuries(fights)
     write_injuries(items)
     injuries = index_injuries(items)

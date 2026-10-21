@@ -535,6 +535,11 @@ export function Predictor() {
                         ))}
                       </tbody>
                     </table>
+                    <p className="mt-2 text-sm text-muted">
+                      Last 3 strike, defense, and takedown gaps versus each career rate are in the win percentage. Opponent-adjusted
+                      rates and strike location are on the card because they are in the history file. They were tested and did not
+                      improve the fit, so they do not move the percentage. Weigh-ins and short notice are not in the file.
+                    </p>
                   </div>
 
                   {prediction.flags.length > 0 ? (
@@ -576,9 +581,12 @@ export function Predictor() {
           through {learned.lastEvent} on {learned.lastDate}. UFC 1 is not in the public extract, so the walk starts at UFC
           2. A card is scored with the weights and records known before it. Then those results move the weights.
           Knockdowns, control time, and head strikes are in that number, plus an injury burden that fades over about
-          seven months. The burden uses fight-ending injuries from the results file and surgeries checked against a
-          public report. On this history file the injury weight stayed on its prior, because those reports are rare. A sourced
-          surgery still moves the percentage through that prior.
+          seven months. The last three fights also count, but only as a gap versus that fighter’s own career rate. Replacing
+          the career rate with the last three made the history worse. Opponent-adjusted striking and the distance, clinch,
+          ground, body, leg, and reversal splits were tested on the same walk. They did not lower the log loss, so they stay
+          off the percentage. Weigh-ins and short notice are not in the file. The burden uses fight-ending injuries from the
+          results file and surgeries checked against a public report. On this history file the injury weight stayed on its
+          prior, because those reports are rare. A sourced surgery still moves the percentage through that prior.
         </p>
         <p className="mt-2 text-sm text-bone">{learnNote}</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">

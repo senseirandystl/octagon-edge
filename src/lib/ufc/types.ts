@@ -26,6 +26,18 @@ export type Fighter = {
   kd15: number;
   ctrl15: number;
   head15: number;
+  r3Strike: number | null;
+  r3Acc: number | null;
+  r3Def: number | null;
+  r3Td: number | null;
+  adjStrike: number;
+  adjTd: number;
+  distShare: number | null;
+  clinchShare: number | null;
+  groundShare: number | null;
+  bodyShare: number | null;
+  legShare: number | null;
+  rev15: number;
   r1Fin: number;
   lateFin: number;
   finRate: number;
