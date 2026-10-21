@@ -1,0 +1,118 @@
+{
+  "asOf": "2026-10-21",
+  "note": "Cards captured from UFC.com on Oct 21, 2026. History runs through the Oct 17, 2026 Edmonton card.",
+  "events": [
+    {
+      "id": "ufc-333",
+      "name": "UFC 333: Volkanovski vs. Evloev",
+      "date": "2026-10-24",
+      "venue": "Etihad Arena",
+      "location": "Abu Dhabi, United Arab Emirates",
+      "elevationFt": 16,
+      "bouts": [
+        {"a": "Alexander Volkanovski", "b": "Movsar Evloev", "weight": "Featherweight", "title": true},
+        {"a": "Petr Yan", "b": "Merab Dvalishvili", "weight": "Bantamweight", "title": true},
+        {"a": "Lone'er Kavanagh", "b": "Ramazan Temirov", "weight": "Flyweight", "title": false},
+        {"a": "Alexander Volkov", "b": "Rizvan Kuniev", "weight": "Heavyweight", "title": false},
+        {"a": "Aaron Pico", "b": "Losene Keita", "weight": "Featherweight", "title": false},
+        {"a": "Azamat Murzakanov", "b": "Dominick Reyes", "weight": "Light Heavyweight", "title": false},
+        {"a": "Nikita Krylov", "b": "Abdul Rakhman Yakhyaev", "weight": "Light Heavyweight", "title": false},
+        {"a": "Abus Magomedov", "b": "Cam Rowston", "weight": "Middleweight", "title": false},
+        {"a": "Grant Dawson", "b": "Nurullo Aliev", "weight": "Lightweight", "title": false},
+        {"a": "Colby Thicknesse", "b": "Asaf Chopurov", "weight": "Bantamweight", "title": false},
+        {"a": "Abubakar Vagaev", "b": "Jacob Malkoun", "weight": "Middleweight", "title": false},
+        {"a": "Bolaji Oki", "b": "Daniel Santos", "weight": "Featherweight", "title": false},
+        {"a": "Kody Steele", "b": "Noah Gugnon", "weight": "Lightweight", "title": false},
+        {"a": "Iasmin Lucindo", "b": "Nicolle Caliari", "weight": "Women's Strawweight", "title": false}
+      ]
+    },
+    {
+      "id": "ufc-fn-2026-10-31",
+      "name": "UFC Fight Night: Moicano vs. Nolan",
+      "date": "2026-10-31",
+      "venue": "Meta APEX",
+      "location": "Las Vegas, Nevada, USA",
+      "elevationFt": 2001,
+      "bouts": [
+        {"a": "Renato Moicano", "b": "Tom Nolan", "weight": "Lightweight", "title": false},
+        {"a": "Randy Brown", "b": "Carlos Leal", "weight": "Welterweight", "title": false},
+        {"a": "Yana Santos", "b": "Luana Santos", "weight": "Women's Bantamweight", "title": false},
+        {"a": "Jean-Paul Lebosnoyani", "b": "Farman Hasanov", "weight": "Welterweight", "title": false},
+        {"a": "Francis Marshall", "b": "Gaston Bolanos", "weight": "Featherweight", "title": false},
+        {"a": "Azamat Bekoev", "b": "Andre Petroski", "weight": "Middleweight", "title": false},
+        {"a": "Rodrigo Sezinando", "b": "Theodor Berggren", "weight": "Welterweight", "title": false},
+        {"a": "Julian Erosa", "b": "JeongYeong Lee", "weight": "Featherweight", "title": false},
+        {"a": "Nick Klein", "b": "Joseph Kropschot", "weight": "Middleweight", "title": false},
+        {"a": "Talita Alencar", "b": "Piera Rodriguez", "weight": "Women's Strawweight", "title": false},
+        {"a": "Lucia Szabova", "b": "Tainara Lisboa", "weight": "Women's Flyweight", "title": false}
+      ]
+    },
+    {
+      "id": "ufc-fn-2026-11-07",
+      "name": "UFC Fight Night: Bonfim vs. Brady",
+      "date": "2026-11-07",
+      "venue": "Meta APEX",
+      "location": "Las Vegas, Nevada, USA",
+      "elevationFt": 2001,
+      "bouts": [
+        {"a": "Gabriel Bonfim", "b": "Sean Brady", "weight": "Welterweight", "title": false},
+        {"a": "Tatiana Suarez", "b": "Virna Jandiroba", "weight": "Women's Strawweight", "title": false},
+        {"a": "Davey Grant", "b": "Elijah Smith", "weight": "Bantamweight", "title": false},
+        {"a": "Seokhyeon Ko", "b": "Wellington Turman", "weight": "Welterweight", "title": false},
+        {"a": "Billy Elekana", "b": "Lucas Fernando", "weight": "Light Heavyweight", "title": false},
+        {"a": "Mantas Kondratavicius", "b": "Wes Schultz", "weight": "Middleweight", "title": false},
+        {"a": "Gabriel Lorenco", "b": "Alvin Hines", "weight": "Heavyweight", "title": false},
+        {"a": "Karine Silva", "b": "Gabriella Fernandes", "weight": "Women's Flyweight", "title": false},
+        {"a": "Jose Delano", "b": "Murtazali Magomedov", "weight": "Featherweight", "title": false},
+        {"a": "Keiichiro Nakamura", "b": "Ollie Schmid", "weight": "Featherweight", "title": false},
+        {"a": "Austin Bashi", "b": "Lucas Brennan", "weight": "Featherweight", "title": false},
+        {"a": "Priscila Cachoeira", "b": "Nina Milosevic", "weight": "Women's Bantamweight", "title": false},
+        {"a": "Jonny Parsons", "b": "Jose Souza", "weight": "Welterweight", "title": false}
+      ]
+    },
+    {
+      "id": "ufc-334",
+      "name": "UFC 334: Gane vs. Hokit",
+      "date": "2026-11-14",
+      "venue": "Madison Square Garden",
+      "location": "New York, New York, USA",
+      "elevationFt": 33,
+      "bouts": [
+        {"a": "Ciryl Gane", "b": "Josh Hokit", "weight": "Heavyweight", "title": true},
+        {"a": "Kayla Harrison", "b": "Amanda Nunes", "weight": "Women's Bantamweight", "title": true},
+        {"a": "Caio Borralho", "b": "Yousri Belgaroui", "weight": "Middleweight", "title": false},
+        {"a": "Uros Medic", "b": "Kevin Holland", "weight": "Welterweight", "title": false},
+        {"a": "Bilal Hasan", "b": "Luis Gurule", "weight": "Flyweight", "title": false},
+        {"a": "Stephen Thompson", "b": "Charles Radtke", "weight": "Welterweight", "title": false},
+        {"a": "Drew Dober", "b": "Chris Duncan", "weight": "Lightweight", "title": false},
+        {"a": "Jim Miller", "b": "Terrance McKinney", "weight": "Lightweight", "title": false},
+        {"a": "Donte Johnson", "b": "Baisangur Susurkaev", "weight": "Middleweight", "title": false},
+        {"a": "Macy Chiasson", "b": "Bia Mesquita", "weight": "Women's Bantamweight", "title": false},
+        {"a": "Adrian Yanez", "b": "Juan Diaz", "weight": "Bantamweight", "title": false},
+        {"a": "Nazim Sadykhov", "b": "Jefferson Nascimento", "weight": "Lightweight", "title": false}
+      ]
+    },
+    {
+      "id": "ufc-fn-2026-11-21",
+      "name": "UFC Fight Night: Prochazka vs. Stirling",
+      "date": "2026-11-21",
+      "venue": "ABHA Arena",
+      "location": "Doha, Qatar",
+      "elevationFt": 33,
+      "bouts": [
+        {"a": "Jiri Prochazka", "b": "Navajo Stirling", "weight": "Light Heavyweight", "title": false}
+      ]
+    },
+    {
+      "id": "ufc-335",
+      "name": "UFC 335: Oliveira vs. Lopes",
+      "date": "2026-12-12",
+      "venue": "T-Mobile Arena",
+      "location": "Las Vegas, Nevada, USA",
+      "elevationFt": 2001,
+      "bouts": [
+        {"a": "Charles Oliveira", "b": "Diego Lopes", "weight": "Lightweight", "title": false}
+      ]
+    }
+  ]
+}
